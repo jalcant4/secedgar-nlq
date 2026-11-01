@@ -547,10 +547,34 @@ def sec_tools() -> dict:
     }
 
 
-def build_prompt(question: str, history: list, last_feedback: str = "") -> str:
-    instructions = """You are researching an SEC EDGAR question in a persistent Python REPL.
-Use the provided functions to explore SEC filings and financial data freely.
-Available helpers: get_cik(company), get_company_facts(cik), get_recent_filings(cik, form=None),
+RESPONSE_PROTOCOL = """Response protocol — two modes only:
+
+MODE 1 — Working step: Return executable Python code inside a markdown code fence.
+The harness executes the code in a persistent REPL. Use this to call SEC helpers,
+inspect data, compute values, and build up state across steps.
+
+MODE 2 — Final answer: Assign a dictionary to the variable named `result` in your
+Python code. The harness will validate and format it. No other response is accepted.
+
+Examples:
+  ```python
+  cik = get_cik("Apple")
+  facts = get_company_facts(cik)
+  print(facts["entityName"])
+  ```
+
+  ```python
+  result = {"company": facts["entityName"], "cik": cik, ...}
+  ```
+
+Rules:
+  - Return ONLY a code fence with Python code, or assign `result`.
+  - Do not include commentary, XML, or prose outside the code fence.
+  - Do not call research_complete; only the harness decides when to stop.
+"""
+
+TOOL_REFERENCE = """SEC tools available in the REPL:
+get_cik(company), get_company_facts(cik), get_recent_filings(cik, form=None),
 get_observations(cik, concept, unit="USD"), get_annual_observations(cik, concept),
 find_concepts(cik, metric), research_filings(cik, forms, terms, max_filings),
 review_debt_footnote(cik, accession), financial_trends(cik, periods),
@@ -571,17 +595,17 @@ Use review_debt_footnote(cik, accession) to inspect a 10-K debt footnote.
 Use build_debt_composition(cik, period=period, accession=accession, method="current_plus_noncurrent")
 to get total_debt, debt_method, and debt_components. The helper raises on missing components.
 Other strategies are in DEBT_STRATEGIES. Use bare concept names in debt_components.
-SEC XBRL values are under facts['facts']['us-gaap'][concept]['units']['USD']. 
+SEC XBRL values are under facts['facts']['us-gaap'][concept]['units']['USD'].
 Observations contain val, start (for durations), end, form, filed, accn.
 Print short observations only (at most 5 items). Reuse persistent variables across steps.
-When you have sufficient evidence, assign a dictionary named result with your findings.
-The harness will validate and format the result. Generate ONE executable Python step, code only.
-Do not set research_complete; only the harness decides when to stop.
 """
+
+
+def build_prompt(question: str, history: list, last_feedback: str = "") -> str:
     tail = f"{last_feedback}\n" if last_feedback else ""
     recent = " ".join(history[-3:]) if history else "(none)"
-    return (f"{instructions}\nQuestion:\n{question}\n\nRecent steps and feedback:\n"
-            f"{tail}{recent}\n"
+    return (f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\nQuestion:\n{question}\n\n"
+            f"Recent steps and feedback:\n{tail}{recent}\n"
             "Continue with one Python step; do not repeat completed work. "
             "Inspect persistent state with print(inspect()), print(inspect('latest', mode='keys')), "
             "print(inspect(mode='last_error')), or print(inspect(mode='validation')) when needed. "
