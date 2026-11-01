@@ -26,6 +26,13 @@ from filing_text import (
 from financial_trends import financial_trends
 from llm import llm_query
 from repl import REPL
+
+try:
+    from duckduckgo_search import DDGS
+    _WEB_SEARCH_AVAILABLE = True
+except ImportError:
+    _WEB_SEARCH_AVAILABLE = False
+    DDGS = None
 from sec_data import (
     get_annual_observations,
     get_observations,
@@ -35,7 +42,7 @@ from sec_data import (
 )
 
 MAX_STEPS = 15
-RESEARCH_STEPS = 30
+RESEARCH_STEPS = 100
 MAX_OBSERVATION_CHARS = 2000
 MAX_IDENTICAL_REJECTIONS = 3
 
@@ -115,6 +122,26 @@ def extract_code(response: str) -> str:
 
 def _number(value):
     return type(value) in (int, float) and isfinite(value)
+
+
+def web_search_query(query: str, max_results: int = 5) -> list[dict]:
+    """Search the web for background context. Returns [{title, url, snippet}].
+
+    Web results are supplementary context only — they do NOT replace SEC filings
+    as primary evidence. Never cite a web result as an SEC source.
+    """
+    if not _WEB_SEARCH_AVAILABLE or DDGS is None:
+        return [{"title": "web search unavailable", "url": "", "snippet": "duckduckgo-search not installed"}]
+    try:
+        with DDGS() as ddgs:
+            # Try news first (better results for current events), fall back to text
+            results = list(ddgs.news(query, max_results=max_results))
+            if not results:
+                results = list(ddgs.text(query, max_results=max_results))
+            return [{"title": r.get("title", ""), "url": r.get("url") or r.get("href", ""),
+                     "snippet": r.get("body", "")[:300]} for r in results]
+    except Exception as exc:
+        return [{"title": f"web search error: {exc}", "url": "", "snippet": ""}]
 
 
 def expected_concepts(facts: dict) -> dict[str, list[str]]:
@@ -553,7 +580,8 @@ def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
                            "build_debt_composition": build_debt_composition,
                            "get_filing_text": tracked_filing_text,
                            "search_filing": search_filing,
-                           "filing_url": filing_url})
+                           "filing_url": filing_url,
+                           "web_search": web_search_query})
     if contract.kind == "concept_discovery":
         schema = ("result = {'company': company_name, 'cik': cik, "
                   "'net_income_concepts': complete_list, 'debt_concepts': complete_list}")
@@ -586,7 +614,11 @@ def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
                  "The ontology supports ONLY net_income_loss and total_interest_bearing_debt for find_concepts; financial_trends is a SEPARATE helper with six financial metrics, including capital_expenditures, operating_cash_flow, free_cash_flow, cash_and_equivalents, debt_carrying_amount and net_income. Never call get_annual_observations with a derived metric name. "
                  "never call find_concepts for capex, lease, cash flow, or other metrics. "
                  "Avoid calling build_debt_composition for research tasks unless specifically needed. "
-                 "Do not claim that a source was searched if retrieval failed.")
+                 "Do not claim that a source was searched if retrieval failed. "
+                 "For background context outside SEC filings, call web_search(query, max_results=5). "
+                 "EXAMPLE: web_search('Oracle Project Jupiter force majeure'). This returns [{title, url, snippet}]. "
+                 "Web results are supplementary — they provide context but NEVER replace SEC filings as primary evidence. "
+                 "Never cite a web result as an SEC source in result['sources']. Web context may inform result['limitations'] or background statements.")
     else:
         schema = ("result = {'company': company_name, 'cik': cik, 'period': 'YYYY-MM-DD', "
                   "'net_income': number, 'total_debt': number, 'ratio': number, "
@@ -656,7 +688,7 @@ Do not set research_complete; only the harness decides when to stop.
     for step in range(1, max_steps + 1):
         prompt = (f"{instructions}\nQuestion:\n{question}\n\nRecent steps and feedback:\n"
                   f"{' '.join(observations[-3:]) or '(none)'}\n"
-                  "Continue with one Python step; do not repeat completed work. Inspect persistent state with print(inspect()), print(inspect('latest', mode='keys')), print(inspect(mode='last_error')), or print(inspect(mode='validation')) when needed. Do not reset successful work.")
+                  "Continue with one Python step; do not repeat completed work. Inspect persistent state with print(inspect()), print(inspect('latest', mode='keys')), print(inspect(mode='last_error')), print(inspect(mode='validation')), or print(inspect(mode='funcs')) to see available functions when needed. Do not reset successful work.")
         try:
             response = llm_query(prompt)
         except (OSError, RuntimeError, ValueError) as exc:
