@@ -626,7 +626,11 @@ Use bare names in submitted debt_components for clarity.
 Prefer normalized helpers. Do NOT access a nonexistent observations key: SEC XBRL values are under units["USD"].
 Do not import SEC libraries or make HTTP requests. Reuse persistent variables.
 Company facts: facts['entityName'], facts['cik'], facts['facts']['us-gaap'][concept]['units']['USD'].
-Observations contain val, start (for durations), end, form, filed, accn.
+CRITICAL: Two different dict types exist — NEVER confuse their keys:
+  Filings (from get_recent_filings): keys are accessionNumber, filingDate, reportDate.
+  Observations (from get_annual_observations): keys are val, start, end, form, filed, accn, fy, fp, frame.
+A filing dict has NO 'filed' or 'accn' key; an observation dict has NO 'filingDate' or 'reportDate' key.
+Use f['filingDate'] for filings; use obs['filed'] for observations. Use f['accessionNumber'] for filings; use obs['accn'] for observations.
 Find concepts inside the us-gaap dictionary. Print short observations only (at most 5 items).
 Use get_recent_filings(cik, "10-K") to find the latest annual report.
 For RESEARCH tasks prefer research_filings(cik, forms, terms, max_filings), which retrieves and searches SEC primary documents deterministically.
