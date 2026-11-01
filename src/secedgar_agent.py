@@ -378,6 +378,7 @@ def format_ratio_answer(result: dict, retrieved_documents: dict | None = None) -
     debt_review = result.get('debt_review', {})
 
     # Build source metadata lookup from retrieved documents or debt review.
+    # retrieved_documents may have URL but no filing_date; debt_review fills that gap.
     source_meta: dict[str, dict] = {}
     if retrieved_documents:
         for acc, doc in retrieved_documents.items():
@@ -386,11 +387,11 @@ def format_ratio_answer(result: dict, retrieved_documents: dict | None = None) -
     if isinstance(debt_review, dict) and debt_review.get('source'):
         src = debt_review['source']
         acc = src.get('accession', '')
-        if acc and acc not in source_meta:
+        if acc:
             source_meta[acc] = {
-                'url': src.get('url', ''),
-                'filing_date': src.get('filing_date', ''),
-                'form': src.get('form', '10-K'),
+                'url': src.get('url', source_meta.get(acc, {}).get('url', '')),
+                'filing_date': src.get('filing_date', source_meta.get(acc, {}).get('filing_date', '')),
+                'form': src.get('form', source_meta.get(acc, {}).get('form', '10-K')),
             }
 
     # APA labels: same-year disambiguation.
