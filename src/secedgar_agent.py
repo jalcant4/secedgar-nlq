@@ -715,7 +715,8 @@ def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
     history: list[str] = []
     last_feedback = ""
 
-    for _ in range(max_steps):
+    steps_used = 0
+    while steps_used < max_steps:
         prompt = build_prompt(question, history, last_feedback)
         try:
             response = llm_query(prompt)
@@ -728,7 +729,8 @@ def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
             last_feedback = f"Invalid Python: {exc}. Return only executable Python."
             print(f"INVALID CODE: {last_feedback}", flush=True)
             history.append(last_feedback)
-            continue
+            continue  # Syntax/code-extraction errors do not consume a turn.
+        steps_used += 1
         repl.namespace.pop("result", None)
         output = repl.execute(code)
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
