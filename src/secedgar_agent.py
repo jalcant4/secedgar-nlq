@@ -659,10 +659,8 @@ Do not set research_complete; only the harness decides when to stop.
             code = extract_code(response)
         except (SyntaxError, ValueError) as exc:
             feedback = f"Invalid Python: {exc}. Return only executable Python."
-            print(f"=== STEP {step}: INVALID CODE ===\n{feedback}")
             observations.append(feedback)
             continue
-        print(f"=== STEP {step} ===\n{code}", flush=True)
         repl.namespace.pop("result", None)
         output = repl.execute(code)
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
@@ -731,14 +729,11 @@ Do not set research_complete; only the harness decides when to stop.
                 last_rejection = fingerprint
                 identical_rejections = 1
             if identical_rejections >= MAX_IDENTICAL_REJECTIONS:
-                print(f"=== STALLED: identical rejected result {identical_rejections} times ===")
-                print(feedback)
                 return None
         else:
             feedback = "Continue research; no final result submitted yet."
             repl.validation = {"status": "not_submitted"}
         observations.append(observation(step, feedback, output))
-        print(f"Validation: {feedback}", flush=True)
     print(f"Research stopped after {max_steps} steps without a verified result.")
     return None
 
