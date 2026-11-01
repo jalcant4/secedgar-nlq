@@ -204,13 +204,21 @@ def validate_ratio(result: dict, facts: dict) -> list[str]:
     source_ids = set(sources)
 
     def matches(concept, value, annual):
+        from datetime import date as _date
         for obs in gaap.get(concept, {}).get("units", {}).get("USD", []):
             if (obs.get("form") != "10-K" or obs.get("end") != period or
                 obs.get("accn") not in source_ids or not _number(obs.get("val"))):
                 continue
-            if annual and not (isinstance(obs.get("start"), str) and
-                               obs["start"] == f"{period[:4]}-01-01"):
-                continue
+            if annual:
+                start = obs.get("start")
+                if not isinstance(start, str):
+                    continue
+                try:
+                    days = (_date.fromisoformat(period) - _date.fromisoformat(start)).days + 1
+                except ValueError:
+                    continue
+                if not 350 <= days <= 380:
+                    continue
             if isclose(obs["val"], value, rel_tol=1e-9, abs_tol=1):
                 return True
         return False
