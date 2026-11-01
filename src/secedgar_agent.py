@@ -177,6 +177,11 @@ def validate_reporting_period(result: dict, contract: CompletionContract) -> lis
 def validate_ratio(result: dict, facts: dict) -> list[str]:
     """Verify arithmetic and provenance, not semantic correctness of debt grouping."""
     errors = []
+    for key in ("net_income", "total_debt", "ratio", "period", "sources", "debt_components"):
+        if key not in result:
+            errors.append(f"Missing required key: {key}.")
+    if errors:
+        return errors
     for key in ("net_income", "total_debt", "ratio"):
         if not _number(result[key]):
             errors.append(f"{key} must be a finite number.")
@@ -481,6 +486,22 @@ def format_research_sentence(result: dict) -> str:
     return format_research_answer(result)
 
 
+def _normalize_result(candidate: dict) -> dict:
+    """Normalize result keys to canonical form for validation and formatting."""
+    if "net_income_to_debt_ratio" in candidate:
+        candidate = dict(candidate)
+        candidate["ratio"] = candidate.pop("net_income_to_debt_ratio")
+    return candidate
+
+
+def format_answer(candidate: dict, retrieved_documents: dict | None = None) -> str:
+    """Dispatch to the right formatter based on result shape."""
+    candidate = _normalize_result(candidate)
+    if all(k in candidate for k in ("net_income", "total_debt", "ratio", "period")):
+        return format_ratio_answer(candidate, retrieved_documents)
+    return format_research_answer(candidate)
+
+
 def research_complete(result: object, contract: CompletionContract,
                       facts: dict | None) -> list[str]:
     """Empty errors means all *implemented* checks passed."""
@@ -553,8 +574,9 @@ MODE 1 — Working step: Return executable Python code inside a markdown code fe
 The harness executes the code in a persistent REPL. Use this to call SEC helpers,
 inspect data, compute values, and build up state across steps.
 
-MODE 2 — Final answer: Assign a dictionary to the variable named `result` in your
-Python code. The harness will validate and format it. No other response is accepted.
+MODE 2 — Final answer: Return a line beginning with `FINAL:` followed by your
+natural-language answer. The harness accepts this as the terminal response.
+No result dictionary, no validation, no prescribed structure.
 
 Examples:
   ```python
@@ -563,14 +585,14 @@ Examples:
   print(facts["entityName"])
   ```
 
-  ```python
-  result = {"company": facts["entityName"], "cik": cik, ...}
-  ```
+  FINAL:
+  Apple's net-income-to-debt ratio for fiscal year 2025 was 1.24,
+  based on net income of $102.0 billion and total debt of $82.5 billion.
 
 Rules:
-  - Return ONLY a code fence with Python code, or assign `result`.
-  - Do not include commentary, XML, or prose outside the code fence.
-  - Do not call research_complete; only the harness decides when to stop.
+  - Return ONLY a code fence with Python code, or a `FINAL:` line.
+  - Do not include commentary, XML, or prose outside the code fence or FINAL: line.
+  - The model decides when it has sufficient evidence to stop.
 """
 
 TOOL_REFERENCE = """SEC tools available in the REPL:
@@ -608,7 +630,7 @@ def build_prompt(question: str, history: list, last_feedback: str = "") -> str:
             f"Recent steps and feedback:\n{tail}{recent}\n"
             "Continue with one Python step; do not repeat completed work. "
             "Inspect persistent state with print(inspect()), print(inspect('latest', mode='keys')), "
-            "print(inspect(mode='last_error')), or print(inspect(mode='validation')) when needed. "
+            "print(inspect(mode='last_error')) when needed. "
             "Do not reset successful work.")
 
 
@@ -682,6 +704,10 @@ def validate_result(candidate: object, retrieved_documents: dict) -> list[str]:
                     errors.append(f"{field}[{i}] excerpt is not verbatim text from its cited filing.")
 
     # --- Financial ratio validation (triggered by ratio-shaped result) ---
+    has_ratio_shape = any(k in candidate for k in ("net_income", "total_debt")) and (
+        "ratio" in candidate or "net_income_to_debt_ratio" in candidate)
+    if has_ratio_shape and "period" not in candidate:
+        errors.append("Ratio results must include 'period' (YYYY-MM-DD) and 'sources' (list of SEC accession numbers).")
     if all(k in candidate for k in ("net_income", "total_debt", "ratio", "period")):
         errors.extend(validate_ratio(candidate, facts) if facts else [])
         # Latest-annual check: if the result has a period but no explicit "latest"
@@ -717,16 +743,9 @@ def _validate_period(result: dict) -> list[str]:
     return []
 
 
-def is_final_answer(candidate: object) -> bool:
-    """Check whether the candidate looks like a complete research result."""
-    if not isinstance(candidate, dict):
-        return False
-    return bool(candidate.get("company") and candidate.get("cik"))
-
-
-def extract_answer(candidate: object) -> dict:
-    """Return the candidate result ready for formatting."""
-    return candidate
+def is_final_response(response: str) -> bool:
+    """Check whether the raw LLM response signals a terminal answer."""
+    return response.strip().startswith("FINAL:")
 
 
 def _snapshot(repl: REPL) -> str:
@@ -760,62 +779,35 @@ def _observation(code: str, output: str, repl: REPL) -> str:
     return "\n\n".join(lines)
 
 
-def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
-    """Iterative SEC research: model calls SEC tools freely, harness validates."""
-    tools = sec_tools()
-    retrieved_documents = tools.pop("_retrieved_documents")
-    repl = REPL(namespace=tools)
-    repl.validation = {"status": "not_checked"}
+def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
+    """Iterative SEC research: model decides what to do, harness executes."""
+    repl = REPL(namespace=sec_tools())
     history: list[str] = []
-    last_feedback = ""
 
     steps_used = 0
     while steps_used < max_steps:
-        prompt = build_prompt(question, history, last_feedback)
+        prompt = build_prompt(question, history)
         try:
             response = llm_query(prompt)
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"=== INFERENCE UNAVAILABLE === {type(exc).__name__}: {exc}")
             return None
+        if is_final_response(response):
+            answer = response.strip()
+            print(answer)
+            return answer
         try:
             code = extract_code(response)
         except (SyntaxError, ValueError) as exc:
-            last_feedback = f"Invalid Python: {exc}. Return only executable Python."
-            print(f"INVALID CODE: {last_feedback}", flush=True)
-            history.append(last_feedback)
+            history.append(f"Invalid Python: {exc}. Return only executable Python.")
+            print(f"INVALID CODE: {exc}", flush=True)
             continue  # Syntax/code-extraction errors do not consume a turn.
         steps_used += 1
-        repl.namespace.pop("result", None)
         output = repl.execute(code)
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
-        # Always record what happened so the model can learn from it.
         history.append(_observation(code, output, repl))
-        candidate = repl.namespace.get("result")
-        if repl.last_failed:
-            last_feedback = (
-                f"Execution failed. Review the ERROR above and inspect state:\n"
-                '  print(inspect(mode="last_error"))\n'
-                '  print(inspect(mode="validation"))\n'
-                '  print(inspect("cik", mode="keys"))\n'
-                "Reuse variables already set; repair and resubmit."
-            )
-            repl.validation = {"status": "execution_failed", "errors": [repl.last_error or output]}
-            print(f"VALIDATION: {last_feedback}", flush=True)
-            continue
-        if candidate is not None and is_final_answer(candidate):
-            errors = validate_result(candidate, retrieved_documents)
-            repl.validation = {"status": "rejected" if errors else "accepted",
-                               "errors": list(errors)}
-            if not errors:
-                print(format_research_answer(candidate))
-                return extract_answer(candidate)
-            last_feedback = "Result rejected: " + "; ".join(errors)
-            print(f"VALIDATION: {last_feedback}", flush=True)
-            continue
-        last_feedback = "Continue research; no final result submitted yet."
-        repl.validation = {"status": "not_submitted"}
 
-    print(f"Research stopped after {max_steps} steps without a verified result.")
+    print(f"Research stopped after {max_steps} steps without a final answer.")
     return None
 
 
