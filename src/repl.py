@@ -61,7 +61,6 @@ class REPL:
     def execute(self, code: str) -> str:
         # Write to output
         output = StringIO()
-        self.last_error = None
 
         try:
             # Strip markdown code fences (LLMs often wrap code in ```python ... ```)

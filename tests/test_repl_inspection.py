@@ -14,7 +14,8 @@ def test_inspection_after_exception_and_recovery():
     repl.execute("x = 3\nraise ValueError('bad key')")
     assert 'bad key' in repl.inspect_state(mode='last_error')
     assert repl.execute("print(x)").strip() == '3'
-    assert repl.inspect_state(mode='last_error') == 'No execution error'
+    # last_error is preserved after recovery so the model can inspect it later
+    assert 'bad key' in repl.inspect_state(mode='last_error')
 
 
 def test_validation_feedback_and_bounded_preview():

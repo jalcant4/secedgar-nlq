@@ -549,7 +549,8 @@ Do not set research_complete; only the harness decides when to stop.
         failed = "Traceback (most recent call last):" in output
         candidate = repl.namespace.get("result")
         if failed:
-            feedback = "Execution failed; inspect(mode=\"last_error\") and reuse existing variables."
+            err_tail = (repl.last_error or output)[-400:]
+            feedback = f"Execution failed: {err_tail}\nReuse variables already set; inspect(inspect(mode=\"last_error\"), inspect(mode=\"validation\"), inspect(\"cik\", mode=\"keys\")) to repair without redoing work."
             repl.validation = {"status": "execution_failed", "errors": [repl.last_error or output]}
         elif candidate is not None:
             cik = candidate.get("cik") if isinstance(candidate, dict) else None
