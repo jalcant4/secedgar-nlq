@@ -96,6 +96,9 @@ def extract_code(response: str) -> str:
     if not match:
         match = re.search(r"```(?:python|py|json)?\s*\n(.*?)```", response, re.DOTALL)
     code = (match.group(1) if match else response).strip()
+    # Strip a leading language tag the model sometimes emits as plain text.
+    if code.lower().startswith('python\n'):
+        code = code[len('python'):].lstrip('\n')
     if code.startswith('{'):
         try:
             wrapper = json.loads(code)
