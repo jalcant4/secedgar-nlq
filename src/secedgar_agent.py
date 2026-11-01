@@ -350,7 +350,8 @@ def format_research_answer(result: dict) -> str:
     sentences.append(conclusions[result['conclusion']].rstrip('.') + f' ({summary_cites}).')
     if result.get('limitations'):
         sentences.append('This conclusion is limited to the filings examined; absence of a mention does not establish that no private notice exists.')
-    references = [f"{author}. ({date_from_iso(s['filing_date'])}). "
+    _author = author.rstrip('.')
+    references = [f"{_author}. ({date_from_iso(s['filing_date'])}). "
                   f"*Form {s['form']}* [SEC filing]. U.S. Securities and Exchange Commission. {s['url']}"
                   for s in ordered]
     return ' '.join(sentences) + '\n\nReferences\n' + '\n'.join(references)
@@ -467,7 +468,8 @@ def format_ratio_answer(result: dict, retrieved_documents: dict | None = None) -
         year = meta.get('filing_date', '')[:4]
         form = meta.get('form', '10-K')
         url = meta.get('url', '')
-        ref = f"{company}. ({year}). " if year else f"{company}. (n.d.). "
+        _company = company.rstrip('.')
+        ref = f"{_company}. ({year}). " if year else f"{_company}. (n.d.). "
         ref += f"*Form {form}* [SEC filing]. U.S. Securities and Exchange Commission. {url}"
         references.append(ref)
 
