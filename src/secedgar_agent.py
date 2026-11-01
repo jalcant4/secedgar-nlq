@@ -356,6 +356,123 @@ def format_research_answer(result: dict) -> str:
     return ' '.join(sentences) + '\n\nReferences\n' + '\n'.join(references)
 
 
+def _fmt_dollars(value: float) -> str:
+    """Format a dollar amount as a human-readable string."""
+    if abs(value) >= 1e9:
+        return f"${value / 1e9:,.2f} billion"
+    if abs(value) >= 1e6:
+        return f"${value / 1e6:,.2f} million"
+    return f"${value:,.2f}"
+
+
+def format_ratio_answer(result: dict, retrieved_documents: dict | None = None) -> str:
+    """Human-readable APA-style paragraph for a financial_ratio result."""
+    company = result.get('company', 'Unknown')
+    period = result.get('period', 'unknown')
+    net_income = result.get('net_income', 0)
+    total_debt = result.get('total_debt', 0)
+    ratio = result.get('ratio', 0)
+    sources = result.get('sources', [])
+    debt_method = result.get('debt_method', 'unknown')
+    debt_components = result.get('debt_components', [])
+    debt_review = result.get('debt_review', {})
+
+    # Build source metadata lookup from retrieved documents or debt review.
+    source_meta: dict[str, dict] = {}
+    if retrieved_documents:
+        for acc, doc in retrieved_documents.items():
+            if isinstance(doc, dict) and doc.get('url'):
+                source_meta[acc] = {'url': doc['url'], 'filing_date': '', 'form': '10-K'}
+    if isinstance(debt_review, dict) and debt_review.get('source'):
+        src = debt_review['source']
+        acc = src.get('accession', '')
+        if acc and acc not in source_meta:
+            source_meta[acc] = {
+                'url': src.get('url', ''),
+                'filing_date': src.get('filing_date', ''),
+                'form': src.get('form', '10-K'),
+            }
+
+    # APA labels: same-year disambiguation.
+    from collections import Counter, defaultdict
+    ordered = sorted(
+        (source_meta.get(acc, {'url': '', 'filing_date': '', 'form': '10-K'})
+         for acc in sources if acc),
+        key=lambda s: (s['filing_date'], s['form'], next((a for a in sources if source_meta.get(a, {}) == s), '')),
+    )
+    # Deduplicate by accession.
+    seen_accs: set[str] = set()
+    unique_sources = []
+    for acc in sources:
+        if acc in seen_accs:
+            continue
+        seen_accs.add(acc)
+        meta = source_meta.get(acc, {'url': '', 'filing_date': '', 'form': '10-K'})
+        unique_sources.append((acc, meta))
+    ordered = [m for _, m in unique_sources]
+
+    counts = Counter(s['filing_date'][:4] for s in ordered if s.get('filing_date'))
+    index: defaultdict[str, int] = defaultdict(int)
+    labels: dict[str, str] = {}
+    for acc, meta in unique_sources:
+        year = meta.get('filing_date', '')[:4]
+        if year:
+            suffix = chr(97 + index[year]) if counts[year] > 1 else ''
+            index[year] += 1
+            labels[acc] = f"{company}, {year}{suffix}"
+        else:
+            labels[acc] = company
+
+    # Build narrative sentences.
+    sentences = []
+    cite_str = ', '.join(labels.get(acc, company) for acc, _ in unique_sources)
+    sentences.append(
+        f"For the fiscal year ending {period}, {company} reported net income of "
+        f"{_fmt_dollars(net_income)} and total interest-bearing debt of "
+        f"{_fmt_dollars(total_debt)} ({debt_method.replace('_', ' ')}), yielding a "
+        f"net-income-to-debt ratio of {ratio:.4f} {cite_str}."
+    )
+
+    # Debt components detail.
+    if debt_components:
+        comp_parts = []
+        for c in debt_components:
+            concept = c.get('concept', 'unknown')
+            value = c.get('value', 0)
+            comp_parts.append(f"{_fmt_dollars(value)} in {concept}")
+        sentences.append(
+            f"Total debt comprises {'; '.join(comp_parts[:-1])}, and "
+            f"{comp_parts[-1]}."
+        )
+
+    # Debt review findings.
+    if isinstance(debt_review, dict):
+        status = debt_review.get('status', '')
+        reason = debt_review.get('reason', '')
+        if status == 'review_required' and reason:
+            sentences.append(f"Debt footnote review: {reason}")
+        elif status == 'not_reviewed' and reason:
+            sentences.append(f"Debt footnote review could not be completed: {reason}")
+
+    sentences.append(
+        "This ratio is derived from XBRL Company Facts and does not independently "
+        "verify exhaustive interest-bearing debt coverage; lease liabilities and "
+        "company-specific extensions may affect the total."
+    )
+
+    # References.
+    references = []
+    for acc, meta in unique_sources:
+        year = meta.get('filing_date', '')[:4]
+        form = meta.get('form', '10-K')
+        url = meta.get('url', '')
+        ref = f"{company}. ({year}). " if year else f"{company}. (n.d.). "
+        ref += f"*Form {form}* [SEC filing]. U.S. Securities and Exchange Commission. {url}"
+        references.append(ref)
+
+    return ' '.join(sentences) + '\n\nReferences\n' + '\n'.join(references)
+
+
 # Backward-compatible name for callers of the previous extension.
 def format_research_sentence(result: dict) -> str:
     return format_research_answer(result)
@@ -592,6 +709,9 @@ Do not set research_complete; only the harness decides when to stop.
                 if contract.kind == 'financial_research':
                     print('=== FINAL ANSWER ===')
                     print(format_research_answer(candidate))
+                elif contract.kind == 'financial_ratio':
+                    print('=== RATIO RESULT ===')
+                    print(format_ratio_answer(candidate, retrieved_documents))
                 else:
                     print(candidate)
                 if contract.kind == "financial_ratio":
