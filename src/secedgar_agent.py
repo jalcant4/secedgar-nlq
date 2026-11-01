@@ -659,7 +659,7 @@ Do not set research_complete; only the harness decides when to stop.
             code = extract_code(response)
         except (SyntaxError, ValueError) as exc:
             feedback = f"Invalid Python: {exc}. Return only executable Python."
-            print(f"INVALID CODE: {feedback}", flush=True)
+            print(f"STEP {step}: INVALID CODE — {feedback}", flush=True)
             observations.append(feedback)
             continue
         repl.namespace.pop("result", None)
@@ -737,7 +737,7 @@ Do not set research_complete; only the harness decides when to stop.
             repl.validation = {"status": "not_submitted"}
         observations.append(observation(step, feedback, output))
         if feedback and feedback != "Continue research; no final result submitted yet.":
-            print(f"VALIDATION: {feedback}", flush=True)
+            print(f"STEP {step}: VALIDATION — {feedback}", flush=True)
     print(f"Research stopped after {max_steps} steps without a verified result.")
     return None
 
