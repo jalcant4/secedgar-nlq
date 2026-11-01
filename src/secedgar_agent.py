@@ -710,21 +710,21 @@ Do not set research_complete; only the harness decides when to stop.
                     print('=== FINAL ANSWER ===')
                     print(format_research_answer(candidate))
                 elif contract.kind == 'financial_ratio':
-                    print('=== RATIO RESULT ===')
-                    print(format_ratio_answer(candidate, retrieved_documents))
-                else:
-                    print(candidate)
-                if contract.kind == "financial_ratio":
+                    # Compute debt review first so formatter can cite it.
                     accession = candidate.get('sources', [None])[0]
                     review = repl.namespace.get('debt_review')
                     if not isinstance(review, dict) or not review.get('source') or review['source'].get('accession') != accession:
                         review = tracked_debt_review(candidate['cik'], accession)
-                    print('=== DEBT FOOTNOTE REVIEW ===')
-                    print({'status':review['status'], 'reason':review['reason'],
-                           'source':review['source'], 'excerpts':review['excerpts'][:3]})
                     candidate['debt_review'] = review
                     for warning in validate_debt_composition(candidate, facts).warnings:
                         print("=== NEEDS ACCOUNTING REVIEW ===", warning)
+                    print('=== RATIO RESULT ===')
+                    print(format_ratio_answer(candidate, retrieved_documents))
+                    print('=== DEBT FOOTNOTE REVIEW ===')
+                    print({'status':review['status'], 'reason':review['reason'],
+                           'source':review['source'], 'excerpts':review['excerpts'][:3]})
+                else:
+                    print(candidate)
                 return candidate
             feedback = "Result rejected: " + "; ".join(errors)
             # Repeated identical validation errors indicate no progress, even
