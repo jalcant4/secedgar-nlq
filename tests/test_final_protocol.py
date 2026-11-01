@@ -161,7 +161,6 @@ class TestResearchLoop:
             "build_debt_composition": lambda cik, period, accession, method: {"total_debt": 0},
             "select_observation": lambda obs, **kw: obs[0] if obs else {},
             "normalize_concept": lambda c: c,
-            "make_trend_indicators": lambda trends, evidence: [],
             "prepare_evidence": lambda evidence, trends: {"snippets": [], "trends": {"rows": [], "changes": []}},
             "SUPPORTED_ONTOLOGY_METRICS": (),
             "DEBT_STRATEGIES": {},
@@ -199,33 +198,55 @@ class TestResearchLoop:
         assert "20" in prompt
 
 
-class TestHelperPreservation:
-    """Verify that helper functions remain available for backward compatibility."""
+class TestBoundedInvalidResponses:
+    """Invalid responses are bounded so the loop cannot run indefinitely."""
 
-    def test_make_contract_still_exists(self):
-        assert callable(agent.make_contract)
+    def test_invalid_responses_accumulate(self):
+        """Syntax errors increment the invalid counter."""
+        responses = ["```python\nif True\n```"] * 5 + ["FINAL: done."]
+        with patch('secedgar_agent.llm_query', side_effect=responses):
+            result = agent.research("test", max_steps=20)
+        assert result is None  # exceeded MAX_INVALID_RESPONSES
 
-    def test_validate_ratio_still_exists(self):
-        assert callable(agent.validate_ratio)
+    def test_valid_code_resets_invalid_count(self):
+        """A successful execution prevents the invalid counter from triggering."""
+        responses = [
+            "```python\nif True\n```",  # invalid
+            "```python\nx = 1\n```",    # valid
+            "```python\nif True\n```",  # invalid again
+            "FINAL: done.",
+        ]
+        with patch('secedgar_agent.llm_query', side_effect=responses):
+            result = agent.research("test", max_steps=20)
+        assert result == "FINAL: done."
 
-    def test_validate_research_still_exists(self):
-        assert callable(agent.validate_research)
+    def test_malformed_json_accumulates(self):
+        """Malformed JSON wrappers also increment the invalid counter."""
+        responses = ['{"code": 42}'] * 5 + ["FINAL: done."]
+        with patch('secedgar_agent.llm_query', side_effect=responses):
+            result = agent.research("test", max_steps=20)
+        assert result is None
 
-    def test_research_complete_still_exists(self):
-        assert callable(agent.research_complete)
+    def test_mixed_invalid_then_final(self):
+        """Mix of syntax errors and malformed JSON before FINAL."""
+        responses = [
+            "```python\nbad\n```",       # syntax
+            '{"code": 1}',               # malformed JSON
+            "FINAL: done.",
+        ]
+        with patch('secedgar_agent.llm_query', side_effect=responses):
+            result = agent.research("test", max_steps=20)
+        assert result == "FINAL: done."
 
-    def test_validate_result_still_exists(self):
-        assert callable(agent.validate_result)
+    def test_max_steps_still_works(self):
+        """Normal max_steps exhaustion still works."""
+        responses = ["```python\nprint(1)\n```"] * 35
+        with patch('secedgar_agent.llm_query', side_effect=responses):
+            result = agent.research("test", max_steps=30)
+        assert result is None
 
-    def test_format_answer_still_exists(self):
-        assert callable(agent.format_answer)
 
-    def test_format_ratio_answer_still_exists(self):
-        assert callable(agent.format_ratio_answer)
-
-    def test_format_research_answer_still_exists(self):
-        assert callable(agent.format_research_answer)
-
+class TestSecTools:
     def test_sec_tools_exposes_data_accessors(self):
         tools = agent.sec_tools()
         assert "get_cik" in tools
@@ -247,5 +268,11 @@ class TestHelperPreservation:
         assert "build_debt_composition" in tools
         assert "select_observation" in tools
         assert "normalize_concept" in tools
-        assert "make_trend_indicators" in tools
         assert "prepare_evidence" in tools
+
+    def test_sec_tools_tracked_documents(self):
+        tools = agent.sec_tools()
+        assert tools["_retrieved_documents"] == {}
+        with patch('secedgar_agent.get_filing_text', return_value={"text": "hello", "url": "https://example.com"}):
+            doc = tools["get_filing_text"]("0000320193", "0001769628-25-000001", "primary_doc.xml")
+        assert "0001769628-25-000001" in tools["_retrieved_documents"]
