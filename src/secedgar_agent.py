@@ -15,7 +15,6 @@ from sec_data import get_annual_observations, get_observations, get_recent_filin
 
 MAX_STEPS = 30
 MAX_INVALID_RESPONSES = 5
-MAX_OBSERVATION_CHARS = 2000
 
 
 def extract_code(response: str) -> str:
