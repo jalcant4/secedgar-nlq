@@ -30,9 +30,9 @@ class REPL:
         if name is None:
             if mode != "summary":
                 return {"error": "Provide a variable name for this mode"}
-            return {key: type(value).__name__ for key, value in
-                    list(self.namespace.items()) if not key.startswith("_")
-                    and not callable(value)}
+            return {key: (f"<func>" if callable(value) else type(value).__name__)
+                    for key, value in list(self.namespace.items())
+                    if not key.startswith("_")}
         if name not in self.namespace:
             return {"error": f"Unknown variable: {name}"}
         value = self.namespace[name]
@@ -42,6 +42,9 @@ class REPL:
             return list(value.keys())[:limit] if isinstance(value, dict) else {"error": "Not a dictionary"}
         if mode == "summary":
             return repr(value)[:max_chars]
+        if mode == "funcs":
+            return [k for k, v in self.namespace.items()
+                    if not k.startswith("_") and callable(v)]
         return {"error": f"Unsupported inspection mode: {mode}"}
 
 

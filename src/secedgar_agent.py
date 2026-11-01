@@ -4,6 +4,9 @@ import ast
 import json
 import re
 import sys
+import time
+import urllib.parse
+import urllib.request
 
 from accounting import DEBT_STRATEGIES, build_debt_composition, find_concepts, review_debt_footnote
 from edgar import get_cik, get_company_facts, get_filings
@@ -13,8 +16,92 @@ from llm import llm_query
 from repl import REPL
 from sec_data import get_annual_observations, get_observations, get_recent_filings, normalize_concept, select_observation
 
+try:
+    import requests as _requests
+    _WEB_SEARCH_AVAILABLE = True
+except ImportError:
+    _WEB_SEARCH_AVAILABLE = False
+    _requests = None
+
 MAX_STEPS = 30
 MAX_INVALID_RESPONSES = 5
+
+
+def _search_wikipedia(query: str, max_results: int = 5) -> list[dict]:
+    """Search Wikipedia for background context."""
+    try:
+        q = urllib.parse.quote(query)
+        url = (f"https://en.wikipedia.org/w/api.php?action=query&list=search&"
+               f"srsearch={q}&srlimit={max_results}&format=json&origin=*")
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "secedgar-nlq/1.0 (SEC-research-agent)"
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            results = []
+            for r in data.get("query", {}).get("search", []):
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("fullurl", ""),
+                    "snippet": (r.get("snippet", "") or "")[:200],
+                })
+            return results
+    except Exception as exc:
+        return [{"title": f"wikipedia error: {exc}", "url": "", "snippet": ""}]
+
+
+def _search_duckduckgo(query: str, max_results: int = 5) -> list[dict]:
+    """Search DuckDuckGo HTML (when not rate-limited)."""
+    if _requests is None:
+        return []
+    try:
+        resp = _requests.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return []
+        matches = re.findall(
+            r'class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>',
+            resp.text, re.DOTALL
+        )
+        results = []
+        for raw_url, title in matches[:max_results]:
+            title = re.sub(r"<[^>]+>", "", title).strip()[:120]
+            if "uddg=" in raw_url:
+                encoded = raw_url.split("uddg=")[1].split("&")[0]
+                url = urllib.parse.unquote(encoded)
+            else:
+                url = raw_url
+            results.append({"title": title, "url": url, "snippet": ""})
+        return results
+    except Exception:
+        return []
+    finally:
+        time.sleep(1)
+
+
+def web_search_query(query: str, max_results: int = 5) -> list[dict]:
+    """Search the web for background context. Returns [{title, url, snippet}].
+
+    Web results are supplementary context only — they do NOT replace SEC filings
+    as primary evidence. Never cite a web result as an SEC source.
+    """
+    results = _search_wikipedia(query, max_results)
+    if results and any(r["title"] not in ("", "No results") for r in results):
+        return results
+    results = _search_duckduckgo(query, max_results)
+    if results:
+        return results
+    return [{"title": f"no results for: {query}", "url": "", "snippet": ""}]
 
 
 def extract_code(response: str) -> str:
@@ -26,6 +113,9 @@ def extract_code(response: str) -> str:
     if not match:
         match = re.search(r"```(?:python|py|json)?\s*\n(.*?)```", response, re.DOTALL)
     code = (match.group(1) if match else response).strip()
+    # Strip a leading language tag the model sometimes emits as plain text.
+    if code.lower().startswith('python\n'):
+        code = code[len('python'):].lstrip('\n')
     if code.startswith('{'):
         try:
             wrapper = json.loads(code)
@@ -65,6 +155,7 @@ def sec_tools() -> dict:
         "prepare_evidence": prepare_evidence,
         "review_debt_footnote": tracked_debt_review,
         "financial_trends": financial_trends,
+        "web_search": web_search_query,
         "SUPPORTED_ONTOLOGY_METRICS": ('net_income_loss', 'total_interest_bearing_debt'),
         "get_cik": get_cik, "get_filings": get_filings,
         "get_company_facts": get_company_facts,
@@ -115,7 +206,7 @@ get_cik(company), get_company_facts(cik), get_recent_filings(cik, form=None),
 get_observations(cik, concept, unit="USD"), get_annual_observations(cik, concept),
 find_concepts(cik, metric), research_filings(cik, forms, terms, max_filings),
 review_debt_footnote(cik, accession), financial_trends(cik, periods),
-prepare_evidence(evidence, trends),
+prepare_evidence(evidence, trends), web_search(query, max_results),
 build_debt_composition(cik, period, accession, method), select_observation(observations, ...).
 SUPPORTED_ONTOLOGY_METRICS contains the only supported metric names for find_concepts.
 get_filings(cik) returns SEC parallel arrays for advanced exploration.
@@ -135,6 +226,9 @@ Other strategies are in DEBT_STRATEGIES. Use bare concept names in debt_componen
 SEC XBRL values are under facts['facts']['us-gaap'][concept]['units']['USD'].
 Observations contain val, start (for durations), end, form, filed, accn.
 Print short observations only (at most 5 items). Reuse persistent variables across steps.
+For background context outside SEC filings, call web_search(query, max_results=5).
+Web results are supplementary — they provide context but NEVER replace SEC filings as primary evidence.
+Never cite a web result as an SEC source.
 """
 
 

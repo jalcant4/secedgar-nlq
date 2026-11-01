@@ -82,6 +82,10 @@ def get_cik(company: str) -> str:
     if len(ticker_matches) == 1:
         return str(ticker_matches[0]["cik_str"]).zfill(10)
     if len(ticker_matches) > 1:
+        # Prefer plain tickers over share-class tickers (e.g. ORCL over ORCL-PD)
+        plain = [m for m in ticker_matches if "-" not in m["ticker"]]
+        if len(plain) == 1:
+            return str(plain[0]["cik_str"]).zfill(10)
         tickers = ", ".join(item["ticker"] for item in ticker_matches)
         raise ValueError(
             f"Ambiguous ticker for '{company}': "
@@ -90,13 +94,28 @@ def get_cik(company: str) -> str:
         )
 
     # Partial name/title match (case-insensitive)
+    # Expand common corporate suffix abbreviations so "Corporation" matches "CORP"
+    import re as _re
+    expanded = query
+    expanded = _re.sub(r"\bCORPORATION\b", "CORP", expanded, flags=_re.IGNORECASE)
+    expanded = _re.sub(r"\bINCORPORATED\b", "INC", expanded, flags=_re.IGNORECASE)
+    expanded = _re.sub(r"\bLIMITED\b", "LTD", expanded, flags=_re.IGNORECASE)
+    expanded = _re.sub(r"\bCOMPANY\b", "CO", expanded, flags=_re.IGNORECASE)
+    expanded = _re.sub(r"\bENTERPRISES\b", "ENT", expanded, flags=_re.IGNORECASE)
+
     name_matches = [
         item for item in _ticker_cache
-        if query.lower() in item["title"].lower()
+        if expanded.lower() in item["title"].lower()
     ]
     if len(name_matches) == 1:
         return str(name_matches[0]["cik_str"]).zfill(10)
     if len(name_matches) > 1:
+        # Deduplicate by CIK so same company with multiple tickers isn't "ambiguous"
+        by_cik: dict = {}
+        for m in name_matches:
+            by_cik.setdefault(m["cik_str"], m)
+        if len(by_cik) == 1:
+            return str(next(iter(by_cik.values()))["cik_str"]).zfill(10)
         names = ", ".join(item["title"] for item in name_matches)
         raise ValueError(
             f"Ambiguous match for '{company}': "
