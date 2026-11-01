@@ -612,19 +612,40 @@ def build_prompt(question: str, history: list, last_feedback: str = "") -> str:
             "Do not reset successful work.")
 
 
+def _facts_for(cik: str) -> dict | None:
+    """Fetch SEC company facts; return None on failure."""
+    try:
+        return get_company_facts(cik)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def validate_result(candidate: object, retrieved_documents: dict) -> list[str]:
-    """Generic validation for any model-submitted result dict."""
+    """Validate a model-submitted result, dispatching to financial validators
+    when the result shape indicates a ratio or research answer."""
     if not isinstance(candidate, dict):
         return ["result must be a dictionary."]
     errors: list[str] = []
+    cik = candidate.get("cik")
+    facts = _facts_for(cik) if isinstance(cik, str) else None
+
+    # --- Structural checks (apply to every result) ---
     if not isinstance(candidate.get("company"), str) or not candidate["company"].strip():
         errors.append("result must contain a non-empty 'company' string.")
-    if not isinstance(candidate.get("cik"), str) or not re.fullmatch(r"\d{10}", candidate.get("cik", "")):
+    if not isinstance(cik, str) or not re.fullmatch(r"\d{10}", cik):
         errors.append("result must contain a 10-digit 'cik' string.")
-    # Validate cited SEC sources if present.
+    if facts is not None:
+        expected_cik = str(facts.get("cik", "")).zfill(10)
+        if cik != expected_cik:
+            errors.append(f"CIK {cik!r} does not match SEC facts {expected_cik!r}.")
+        expected_name = str(facts.get("entityName", "")).casefold()
+        actual_name = candidate.get("company", "").casefold()
+        if expected_name and actual_name and actual_name != expected_name:
+            errors.append(f"Company name does not match SEC facts.")
+
+    # --- Source provenance ---
     sources = candidate.get("sources")
     if isinstance(sources, list) and sources:
-        valid_accessions = set()
         for i, src in enumerate(sources):
             if isinstance(src, dict):
                 acc = src.get("accession", "")
@@ -634,16 +655,15 @@ def validate_result(candidate: object, retrieved_documents: dict) -> list[str]:
                 if not url.startswith("https://www.sec.gov/Archives/edgar/data/"):
                     errors.append(f"sources[{i}] has invalid SEC URL.")
                 else:
-                    valid_accessions.add(acc)
                     doc = retrieved_documents.get(acc)
                     if not doc or doc.get("url") != url:
                         errors.append(f"sources[{i}] accession {acc} was not retrieved in this run.")
             elif isinstance(src, str) and re.fullmatch(r"\d{10}-\d{2}-\d{6}", src):
-                valid_accessions.add(src)
                 doc = retrieved_documents.get(src)
                 if not doc:
                     errors.append(f"source accession {src} was not retrieved in this run.")
-    # Validate findings/excerpts if present.
+
+    # --- Excerpt verbatim check ---
     for field in ("findings", "financial_indicators", "direct_evidence"):
         items = candidate.get(field)
         if not isinstance(items, list):
@@ -660,7 +680,41 @@ def validate_result(candidate: object, retrieved_documents: dict) -> list[str]:
                 doc = retrieved_documents.get(acc)
                 if not doc or excerpt.strip() not in doc.get("text", ""):
                     errors.append(f"{field}[{i}] excerpt is not verbatim text from its cited filing.")
+
+    # --- Financial ratio validation (triggered by ratio-shaped result) ---
+    if all(k in candidate for k in ("net_income", "total_debt", "ratio", "period")):
+        errors.extend(validate_ratio(candidate, facts) if facts else [])
+        # Latest-annual check: if the result has a period but no explicit "latest"
+        # marker, still verify the period cites a retrieved 10-K accession.
+        if facts is not None and isinstance(candidate.get("period"), str):
+            errors.extend(_validate_period(candidate))
+        if facts is not None:
+            assessment = validate_debt_composition(candidate, facts)
+            errors.extend(assessment.errors)
+
+    # --- Research validation (triggered by research-shaped result) ---
+    if any(k in candidate for k in ("findings", "conclusion", "direct_evidence")):
+        errors.extend(validate_research(candidate))
+
     return errors
+
+
+def _validate_period(result: dict) -> list[str]:
+    """Lightweight period check for ratio results without a full contract."""
+    filings = get_recent_filings(result["cik"], form="10-K")
+    eligible = [f for f in filings if f.get("reportDate") and f.get("accessionNumber")]
+    if not eligible:
+        return []
+    latest_period = max(f["reportDate"] for f in eligible)
+    period = result.get("period", "")
+    sources = result.get("sources", [])
+    if period and period != latest_period:
+        latest_accessions = {f["accessionNumber"] for f in eligible if f["reportDate"] == latest_period}
+        src_set = set(sources) if isinstance(sources, list) else set()
+        if not latest_accessions.intersection(src_set):
+            return [(f"Period {period} is not the latest 10-K fiscal year (ends {latest_period}); "
+                    f"latest accession(s): {', '.join(sorted(latest_accessions))}.")]
+    return []
 
 
 def is_final_answer(candidate: object) -> bool:
