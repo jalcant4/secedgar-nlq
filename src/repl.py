@@ -10,6 +10,7 @@ class REPL:
     namespace: dict[str, Any]= field(default_factory= dict)
     history: list[str]= field(default_factory= list)
     last_error: str | None = None
+    last_failed: bool = False
     validation: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -61,6 +62,7 @@ class REPL:
     def execute(self, code: str) -> str:
         # Write to output
         output = StringIO()
+        self.last_failed = False
 
         try:
             # Strip markdown code fences (LLMs often wrap code in ```python ... ```)
@@ -73,10 +75,10 @@ class REPL:
                 exec(code, self.namespace)  # noqa: S102
         # Catch exceptions with traceback
         except Exception:  # noqa: BLE001
+            self.last_failed = True
             self.last_error = traceback.format_exc()
             output.write(self.last_error)
 
         result = output.getvalue()
         self.history.append(result)
-
         return result

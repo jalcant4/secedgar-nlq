@@ -546,7 +546,7 @@ Do not set research_complete; only the harness decides when to stop.
         repl.namespace.pop("result", None)
         output = repl.execute(code)
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
-        failed = "Traceback (most recent call last):" in output
+        failed = repl.last_failed
         candidate = repl.namespace.get("result")
         if failed:
             err_tail = (repl.last_error or output)[-400:]
