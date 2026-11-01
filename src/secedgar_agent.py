@@ -180,9 +180,29 @@ MODE 1 — Working step: Return executable Python code inside a markdown code fe
 The harness executes the code in a persistent REPL. Use this to call SEC helpers,
 inspect data, compute values, and build up state across steps.
 
-MODE 2 — Final answer: Return a line beginning with `FINAL:` followed by your
-natural-language answer. The harness accepts this as the terminal response.
+MODE 2 — Final answer: Return `FINAL:` followed by a complete, human-readable
+research response. The harness accepts this as the terminal response.
 No result dictionary, no validation, no prescribed structure.
+
+When structured data is requested, present the table, CSV, or other
+requested format first. End substantive research answers with
+a Research Summary and References.
+
+Structure:
+  FINAL:
+  [Title / company name]
+  [Brief context]
+
+  [CSV TABLE or structured data if requested]
+
+  RESEARCH SUMMARY
+  [Natural-language explanation of findings. Interpret results,
+   clarify important distinctions, identify limitations.
+   Support factual claims with APA-style author-date citations.]
+
+  REFERENCES
+  [APA 7-style references for sources actually used.
+   Include direct source URLs where available.]
 
 Examples:
   ```python
@@ -192,8 +212,28 @@ Examples:
   ```
 
   FINAL:
+  Apple Inc.
+  Net-income-to-debt ratio for fiscal year 2025
+
+  ratio = 1.24
+
+  RESEARCH SUMMARY
   Apple's net-income-to-debt ratio for fiscal year 2025 was 1.24,
-  based on net income of $102.0 billion and total debt of $82.5 billion.
+  based on net income of $102.0 billion and total debt of $82.5 billion
+  (Apple Inc., 2025).
+
+  REFERENCES
+  Apple Inc. (2025). Form 10-K for the fiscal year ended September 28, 2025.
+  U.S. Securities and Exchange Commission. https://www.sec.gov/...
+
+Citation rules:
+  - Cite the original source supporting each factual claim.
+  - Use SEC filings as primary sources for SEC financial research.
+  - Use the actual filing metadata and primaryDocument filename.
+  - Do not fabricate authors, publication dates, titles, or URLs.
+  - Do not cite a source that was not retrieved or inspected.
+  - Distinguish retrieved facts from calculations and inferences.
+  - If a claim cannot be substantiated, acknowledge the limitation.
 
 Rules:
   - Return ONLY a code fence with Python code, or a `FINAL:` line.
@@ -250,6 +290,20 @@ Filter data before printing. Do not dump entire SEC submissions or Company Facts
 For background context outside SEC filings, call web_search(query, max_results=5).
 Web results are supplementary — they provide context but NEVER replace SEC filings as primary evidence.
 Never cite a web result as an SEC source.
+
+Source attribution:
+  get_recent_filings() provides filing metadata, including accessionNumber,
+  filingDate, reportDate, and primaryDocument.
+  filing_url(cik, accession, primary_document) produces a direct SEC filing URL
+  suitable for references.
+  get_filing_text() and search_filing() can provide documentary evidence for
+  claims beyond filing metadata.
+  Company Facts observations identify reporting periods and their associated
+  filings, but comparative observations are not necessarily separate filings.
+  Use the retrieved company name, filing form, filing date, reporting-period end,
+  and URL to construct APA references.
+  Do not infer a fiscal-period start solely from reportDate.
+  A citation should support the specific claim being made.
 """
 
 
@@ -332,8 +386,8 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
     last_error_sig: str | None = None
     repeated_errors = 0
 
-    while len(history) + invalid_count < max_steps:
-        remaining = max_steps - len(history) - invalid_count
+    while len(history) < max_steps:
+        remaining = max_steps - len(history)
         prompt = build_prompt(question, history, remaining=remaining)
         try:
             response = llm_query(prompt)
@@ -346,6 +400,7 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
             return answer
         try:
             code = extract_code(response)
+            invalid_count = 0
         except (SyntaxError, ValueError) as exc:
             invalid_count += 1
             feedback = f"Invalid Python: {exc}. Return only executable Python."

@@ -372,3 +372,89 @@ class TestRepeatedErrorDetection:
         with patch('secedgar_agent.llm_query', side_effect=responses):
             result = agent.research("test", max_steps=30)
         assert result is None
+
+
+class TestStructuredFinalAnswer:
+    """The prompt guides the model toward a structured final answer."""
+
+    def test_prompt_contains_structured_format_guidance(self):
+        """Normal prompt tells the model about RESEARCH SUMMARY and REFERENCES."""
+        prompt = agent.build_prompt("test", [], remaining=10)
+        assert "RESEARCH SUMMARY" in prompt
+        assert "REFERENCES" in prompt
+        assert "CSV TABLE" in prompt or "structured data" in prompt
+
+    def test_prompt_contains_citation_rules(self):
+        """Normal prompt includes citation rules."""
+        prompt = agent.build_prompt("test", [], remaining=10)
+        assert "Do not fabricate" in prompt
+        assert "Do not cite a source that was not retrieved" in prompt
+
+    def test_final_answer_with_research_summary_accepted(self):
+        """A FINAL: with RESEARCH SUMMARY and REFERENCES is accepted unchanged."""
+        answer = (
+            "FINAL:\n"
+            "CoreWeave, Inc.\n"
+            "\n"
+            "RESEARCH SUMMARY\n"
+            "CoreWeave had four filings (CoreWeave, Inc., 2025, 2026a, 2026b, 2026c).\n"
+            "\n"
+            "REFERENCES\n"
+            "[1] CoreWeave, Inc. (2025). Form 10-Q.\n"
+        )
+        assert agent.is_final_response(answer) is True
+        assert answer.strip().startswith("FINAL:")
+
+    def test_final_answer_with_csv_and_summary_accepted(self):
+        """A FINAL: with CSV table, summary, and references is accepted unchanged."""
+        answer = (
+            "FINAL:\n"
+            "fiscal_period_start,fiscal_period_end,filing_form\n"
+            "2025-01-01,2025-12-31,10-K\n"
+            "\n"
+            "RESEARCH SUMMARY\n"
+            "One 10-K filing was identified.\n"
+            "\n"
+            "REFERENCES\n"
+            "[1] CoreWeave, Inc. (2026). Form 10-K.\n"
+        )
+        assert agent.is_final_response(answer) is True
+
+
+class TestInvalidCountBugFix:
+    """Invalid responses are already in history; they should not double-count."""
+
+    def test_invalid_responses_dont_double_count_with_history(self):
+        """After 3 invalid responses, history has 3 items; loop should not add 3 more."""
+        # 3 invalid responses + FINAL. With the bug, history would have 3 + invalid_count=3 = 6.
+        # With the fix, only len(history)=3 < max_steps=5, so FINAL is reached.
+        responses = [
+            "```python\nif True\n```",  # invalid, appended to history (len=1)
+            "```python\nif True\n```",  # invalid, appended to history (len=2)
+            "```python\nif True\n```",  # invalid, appended to history (len=3)
+            "FINAL: done.",
+        ]
+        with patch('secedgar_agent.llm_query', side_effect=responses) as mock_llm:
+            result = agent.research("test", max_steps=5)
+        # Should reach FINAL without exhausting steps
+        assert result == "FINAL: done."
+        assert mock_llm.call_count == 4
+
+    def test_invalid_count_resets_on_valid_code(self):
+        """Valid code extraction resets invalid_count so the counter tracks consecutives."""
+        responses = [
+            "```python\nif True\n```",     # invalid (count=1)
+            "```python\nx = 1\n```",      # valid (count resets to 0)
+            "```python\nif True\n```",     # invalid (count=1 again)
+            "```python\nif True\n```",     # invalid (count=2)
+            "```python\nif True\n```",     # invalid (count=3)
+            "```python\nif True\n```",     # invalid (count=4)
+            "```python\nif True\n```",     # invalid (count=5, triggers guard)
+            "FINAL: done.",
+        ]
+        with patch('secedgar_agent.llm_query', side_effect=responses) as mock_llm:
+            result = agent.research("test", max_steps=10)
+        # 5 consecutive invalid responses trigger the guard
+        assert result is None
+        # FINAL is never reached
+        assert mock_llm.call_count == 7
