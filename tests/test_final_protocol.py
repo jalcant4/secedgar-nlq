@@ -276,3 +276,99 @@ class TestSecTools:
         with patch('secedgar_agent.get_filing_text', return_value={"text": "hello", "url": "https://example.com"}):
             doc = tools["get_filing_text"]("0000320193", "0001769628-25-000001", "primary_doc.xml")
         assert "0001769628-25-000001" in tools["_retrieved_documents"]
+
+
+class TestCompletionReminder:
+    """Near the step limit, the prompt warns the model to finalize."""
+
+    def test_prompt_contains_finalization_instruction(self):
+        """Normal prompt tells the model to decide whether to finalize."""
+        prompt = agent.build_prompt("What is Apple's revenue?", [], remaining=10)
+        assert "Decide whether the question has been answered" in prompt
+        assert "return FINAL:" in prompt
+        assert "Only" not in prompt
+
+    def test_prompt_contains_budget_warning_near_limit(self):
+        """When 3 or fewer steps remain, a budget warning is added."""
+        prompt = agent.build_prompt("What is Apple's revenue?", [], remaining=3)
+        assert "Only 3 execution steps remain" in prompt
+        assert "produce FINAL:" in prompt
+
+    def test_prompt_contains_budget_warning_at_one_step(self):
+        prompt = agent.build_prompt("test", [], remaining=1)
+        assert "Only 1 execution steps remain" in prompt
+
+    def test_budget_warning_not_added_with_sufficient_steps(self):
+        prompt = agent.build_prompt("test", [], remaining=5)
+        assert "Only" not in prompt
+
+
+class TestRepeatedErrorDetection:
+    """Repeated execution failures trigger a corrective observation."""
+
+    def test_repeated_typeerror_triggers_corrective_feedback(self):
+        """Three identical TypeErrors produce a corrective observation."""
+        responses = [
+            "```python\nx / 0\n```",
+            "```python\nx / 0\n```",
+            "```python\nx / 0\n```",
+            "FINAL: done.",
+        ]
+        with patch('secedgar_agent.llm_query', side_effect=responses) as mock_llm:
+            result = agent.research("test", max_steps=10)
+        # The model should get the corrective feedback before the 4th call.
+        assert mock_llm.call_count == 4
+        assert result == "FINAL: done."
+
+    def test_different_errors_do_not_trigger_repeat_guard(self):
+        """Two different errors followed by success should not trigger the guard."""
+        responses = [
+            "```python\nx / 0\n```",
+            "```python\n{}['missing']\n```",
+            "```python\nprint('ok')\n```",
+            "FINAL: done.",
+        ]
+        with patch('secedgar_agent.llm_query', side_effect=responses) as mock_llm:
+            result = agent.research("test", max_steps=10)
+        assert result == "FINAL: done."
+        # All 4 calls should succeed (no guard triggered)
+        assert mock_llm.call_count == 4
+
+    def test_same_error_resets_after_success(self):
+        """A successful execution resets the repeated-error counter."""
+        responses = [
+            "```python\nx / 0\n```",
+            "```python\nx / 0\n```",
+            "```python\nprint('recovered')\n```",
+            "```python\nx / 0\n```",
+            "```python\nx / 0\n```",
+            "```python\nx / 0\n```",
+            "FINAL: done.",
+        ]
+        with patch('secedgar_agent.llm_query', side_effect=responses) as mock_llm:
+            result = agent.research("test", max_steps=20)
+        assert result == "FINAL: done."
+        # Counter resets after success; then 3 more identical errors trigger the guard.
+        # Calls: 2 errors + 1 success + 3 errors (guard fires) + FINAL = 7
+        assert mock_llm.call_count == 7
+
+    def test_error_signature_normalization(self):
+        """Different traceback line numbers should match the same error type."""
+        sig1 = agent._error_signature(
+            'Traceback (most recent call last):\n'
+            '  File "<string>", line 3, in <module>\n'
+            'TypeError: unsupported operand type(s) for /: int and int'
+        )
+        sig2 = agent._error_signature(
+            'Traceback (most recent call last):\n'
+            '  File "<string>", line 7, in <module>\n'
+            'TypeError: unsupported operand type(s) for /: int and int'
+        )
+        assert sig1 == sig2
+
+    def test_max_steps_still_triggers_with_repeated_errors(self):
+        """Even with the repeated-error guard, max_steps still terminates."""
+        responses = ["```python\nx / 0\n```"] * 35
+        with patch('secedgar_agent.llm_query', side_effect=responses):
+            result = agent.research("test", max_steps=30)
+        assert result is None

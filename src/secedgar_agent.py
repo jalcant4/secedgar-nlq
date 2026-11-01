@@ -232,15 +232,32 @@ Never cite a web result as an SEC source.
 """
 
 
-def build_prompt(question: str, history: list, last_feedback: str = "") -> str:
+MAX_OUTPUT_CHARS = 2000
+
+
+def build_prompt(question: str, history: list, last_feedback: str = "", remaining: int | None = None) -> str:
     tail = f"{last_feedback}\n" if last_feedback else ""
     recent = " ".join(history[-3:]) if history else "(none)"
-    return (f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\nQuestion:\n{question}\n\n"
-            f"Recent steps and feedback:\n{tail}{recent}\n"
-            "Continue with one Python step; do not repeat completed work. "
+    lines = [f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\nQuestion:\n{question}\n\n"
+             f"Recent steps and feedback:\n{tail}{recent}"]
+    if remaining is not None and remaining <= 3:
+        lines.append(
+            f"\nOnly {remaining} execution steps remain. "
+            "Use existing REPL observations to produce FINAL: if possible. "
+            "If essential evidence is missing, explain that limitation "
+            "rather than restarting the investigation."
+        )
+    else:
+        lines.append(
+            "Decide whether the question has been answered using the observations. "
+            "If yes, return FINAL: with the completed answer. "
+            "Otherwise execute one Python step to obtain missing information. "
+            "Do not repeat a completed calculation or retrieval. "
             "Inspect persistent state with print(inspect()), print(inspect('latest', mode='keys')), "
             "print(inspect(mode='last_error')) when needed. "
-            "Do not reset successful work.")
+            "Do not reset successful work."
+        )
+    return "".join(lines)
 
 
 def _snapshot(repl: REPL) -> str:
@@ -261,13 +278,29 @@ def _observation(code: str, output: str, repl: REPL) -> str:
         code_tail = "..." + code_tail
     lines.append(f"CODE:\n{code_tail}")
     if output.strip():
-        out_tail = output[-1500:] if len(output) > 1500 else output
+        out_tail = output[-MAX_OUTPUT_CHARS:] if len(output) > MAX_OUTPUT_CHARS else output
         lines.append(f"OUTPUT:\n{out_tail}")
     if repl.last_failed and repl.last_error:
-        err_tail = repl.last_error[-1000:]
+        err_tail = repl.last_error[-MAX_OUTPUT_CHARS:]
         lines.append(f"ERROR:\n{err_tail}")
     lines.append(_snapshot(repl))
     return "\n\n".join(lines)
+
+
+def _error_signature(error: str) -> str:
+    """Normalize a traceback for comparison — strip line numbers and file paths."""
+    # Keep the exception type and message; drop file/line info.
+    lines = error.split('\n')
+    sig_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Collapse file paths and line numbers: keep only the exception line.
+        if stripped.startswith('File "') or stripped.startswith('  File "'):
+            continue
+        sig_lines.append(stripped)
+    return '\n'.join(sig_lines)
 
 
 def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
@@ -275,9 +308,12 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
     repl = REPL(namespace=sec_tools())
     history: list[str] = []
     invalid_count = 0
+    last_error_sig: str | None = None
+    repeated_errors = 0
 
     while len(history) + invalid_count < max_steps:
-        prompt = build_prompt(question, history)
+        remaining = max_steps - len(history) - invalid_count
+        prompt = build_prompt(question, history, remaining=remaining)
         try:
             response = llm_query(prompt)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -300,7 +336,31 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
             continue
         output = repl.execute(code)
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
-        history.append(_observation(code, output, repl))
+        if repl.last_failed:
+            error_sig = _error_signature(repl.last_error or output)
+            if error_sig == last_error_sig:
+                repeated_errors += 1
+            else:
+                repeated_errors = 1
+                last_error_sig = error_sig
+            if repeated_errors >= 3:
+                feedback = (
+                    "Repeated execution failure. Stop repeating this operation. "
+                    "Inspect the relevant variable types, use a different method, "
+                    "or return FINAL: with the evidence already obtained."
+                )
+                history.append(feedback)
+                print(f"REPEATED ERROR: {feedback}", flush=True)
+                last_error_sig = None
+                repeated_errors = 0
+            else:
+                err_tail = (repl.last_error or output)[-MAX_OUTPUT_CHARS:]
+                feedback = f"Execution failed: {err_tail}"
+                history.append(_observation(code, output, repl))
+        else:
+            last_error_sig = None
+            repeated_errors = 0
+            history.append(_observation(code, output, repl))
 
     print(f"Research stopped after {max_steps} steps without a final answer.")
     return None
