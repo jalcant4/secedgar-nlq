@@ -207,16 +207,35 @@ get_observations(cik, concept, unit="USD"), get_annual_observations(cik, concept
 find_concepts(cik, metric), research_filings(cik, forms, terms, max_filings),
 review_debt_footnote(cik, accession), financial_trends(cik, periods),
 prepare_evidence(evidence, trends), web_search(query, max_results),
-build_debt_composition(cik, period, accession, method), select_observation(observations, ...).
+build_debt_composition(cik, period, accession, method), select_observation(observations, ...),
+filing_url(cik, accession, primary_document), get_filing_text(cik, accession, primary_document).
 SUPPORTED_ONTOLOGY_METRICS contains the only supported metric names for find_concepts.
-get_filings(cik) returns SEC parallel arrays for advanced exploration.
+Filing metadata (get_recent_filings):
+  Returns a LIST of dicts. Each dict has keys:
+  accessionNumber, filingDate, reportDate, form, primaryDocument.
+  Use these keys directly — do NOT treat the result as a dict.
+  reportDate is the reporting-period END, not the start.
+  primaryDocument is the actual SEC filename; use it with filing_url().
+
+Filing metadata (get_filings):
+  Returns a dict with SEC parallel arrays (advanced use only).
+  Keys: accessionNumber, filingDate, reportDate, form — each is a LIST.
+  Prefer get_recent_filings() for most tasks.
+
+SEC URLs (filing_url):
+  filing_url(cik, accession, primary_document) returns the canonical SEC URL.
+  Example: filing_url('0001769628', '0001769628-26-000366', 'crwv-20260630.htm')
+  Do NOT construct filing URLs by manually removing hyphens from accessions.
 Concept names may be unprefixed or use the us-gaap: prefix; both are accepted.
 Use EXACT concept names from find_concepts as XBRL concept names.
 find_concepts(cik, metric) accepts semantic metrics; get_annual_observations(cik, concept)
 accepts ONLY exact US-GAAP XBRL concepts, e.g. NetIncomeLoss (not net_income_loss).
-Use select_observation() to pick a specific observation from a list; it returns a dict with a "val" key.
-Read the official company name from get_company_facts(cik)["entityName"];
-never invent, substitute, or hard-code a company name.
+Use select_observation() to pick a specific observation from a list;
+  it returns a dict with a "val" key. Observations contain val, start (for durations),
+  end, form, filed, accn.
+Financial helpers:
+  Read the official company name from get_company_facts(cik)["entityName"];
+  never invent, substitute, or hard-code a company name.
 Calculate ratios using full numeric precision. Do NOT round numeric values.
 Rounding is permitted ONLY in human-readable print output.
 Use review_debt_footnote(cik, accession) to inspect a 10-K debt footnote.
@@ -225,7 +244,9 @@ to get total_debt, debt_method, and debt_components. The helper raises on missin
 Other strategies are in DEBT_STRATEGIES. Use bare concept names in debt_components.
 SEC XBRL values are under facts['facts']['us-gaap'][concept]['units']['USD'].
 Observations contain val, start (for durations), end, form, filed, accn.
-Print short observations only (at most 5 items). Reuse persistent variables across steps.
+Print only information needed for the next decision.
+For large collections, print the count, keys, and a small sample.
+Filter data before printing. Do not dump entire SEC submissions or Company Facts objects.
 For background context outside SEC filings, call web_search(query, max_results=5).
 Web results are supplementary — they provide context but NEVER replace SEC filings as primary evidence.
 Never cite a web result as an SEC source.
