@@ -4,6 +4,9 @@ import ast
 import json
 import re
 import sys
+import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from math import isclose, isfinite
 
@@ -28,11 +31,73 @@ from llm import llm_query
 from repl import REPL
 
 try:
-    from duckduckgo_search import DDGS
+    import requests as _requests
     _WEB_SEARCH_AVAILABLE = True
 except ImportError:
     _WEB_SEARCH_AVAILABLE = False
-    DDGS = None
+    _requests = None
+
+
+def _search_wikipedia(query: str, max_results: int = 5) -> list[dict]:
+    """Search Wikipedia for background context."""
+    try:
+        q = urllib.parse.quote(query)
+        url = (f"https://en.wikipedia.org/w/api.php?action=query&list=search&"
+               f"srsearch={q}&srlimit={max_results}&format=json&origin=*")
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "secedgar-nlq/1.0 (SEC-research-agent)"
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            results = []
+            for r in data.get("query", {}).get("search", []):
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("fullurl", ""),
+                    "snippet": (r.get("snippet", "") or "")[:200],
+                })
+            return results
+    except Exception as exc:
+        return [{"title": f"wikipedia error: {exc}", "url": "", "snippet": ""}]
+
+
+def _search_duckduckgo(query: str, max_results: int = 5) -> list[dict]:
+    """Search DuckDuckGo HTML (when not rate-limited)."""
+    if _requests is None:
+        return []
+    try:
+        resp = _requests.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return []
+        matches = re.findall(
+            r'class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>',
+            resp.text, re.DOTALL
+        )
+        results = []
+        for raw_url, title in matches[:max_results]:
+            title = re.sub(r"<[^>]+>", "", title).strip()[:120]
+            if "uddg=" in raw_url:
+                encoded = raw_url.split("uddg=")[1].split("&")[0]
+                url = urllib.parse.unquote(encoded)
+            else:
+                url = raw_url
+            results.append({"title": title, "url": url, "snippet": ""})
+        return results
+    except Exception:
+        return []
+    finally:
+        time.sleep(1)
 from sec_data import (
     get_annual_observations,
     get_observations,
@@ -130,18 +195,15 @@ def web_search_query(query: str, max_results: int = 5) -> list[dict]:
     Web results are supplementary context only — they do NOT replace SEC filings
     as primary evidence. Never cite a web result as an SEC source.
     """
-    if not _WEB_SEARCH_AVAILABLE or DDGS is None:
-        return [{"title": "web search unavailable", "url": "", "snippet": "duckduckgo-search not installed"}]
-    try:
-        with DDGS() as ddgs:
-            # Try news first (better results for current events), fall back to text
-            results = list(ddgs.news(query, max_results=max_results))
-            if not results:
-                results = list(ddgs.text(query, max_results=max_results))
-            return [{"title": r.get("title", ""), "url": r.get("url") or r.get("href", ""),
-                     "snippet": r.get("body", "")[:300]} for r in results]
-    except Exception as exc:
-        return [{"title": f"web search error: {exc}", "url": "", "snippet": ""}]
+    # Try Wikipedia first (most reliable, no rate-limit issues)
+    results = _search_wikipedia(query, max_results)
+    if results and any(r["title"] not in ("", "No results") for r in results):
+        return results
+    # Fall back to DuckDuckGo HTML
+    results = _search_duckduckgo(query, max_results)
+    if results:
+        return results
+    return [{"title": f"no results for: {query}", "url": "", "snippet": ""}]
 
 
 def expected_concepts(facts: dict) -> dict[str, list[str]]:
