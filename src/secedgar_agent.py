@@ -707,6 +707,8 @@ Do not set research_complete; only the harness decides when to stop.
                                "errors": list(errors),
                                "result_type": contract.kind}
             if not errors:
+                print()
+                print('=' * 60)
                 if contract.kind == 'financial_research':
                     print(format_research_answer(candidate))
                 elif contract.kind == 'financial_ratio':
@@ -719,6 +721,8 @@ Do not set research_complete; only the harness decides when to stop.
                     print(format_ratio_answer(candidate, retrieved_documents))
                 else:
                     print(candidate)
+                print('=' * 60)
+                print()
                 return candidate
             feedback = "Result rejected: " + "; ".join(errors)
             # Repeated identical validation errors indicate no progress, even
