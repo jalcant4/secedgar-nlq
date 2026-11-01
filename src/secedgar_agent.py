@@ -675,6 +675,37 @@ def extract_answer(candidate: object) -> dict:
     return candidate
 
 
+def _snapshot(repl: REPL) -> str:
+    """Brief state snapshot: variable names, types, and key metadata."""
+    vars_summary = {
+        k: v.__class__.__name__
+        for k, v in repl.namespace.items()
+        if not k.startswith("_") and not callable(v)
+    }
+    return f"State: {vars_summary}"
+
+
+def _observation(code: str, output: str, repl: REPL) -> str:
+    """Build a rich observation from a REPL execution step."""
+    lines = []
+    # Show the code that was executed (truncated).
+    code_tail = code[:500]
+    if len(code) > 500:
+        code_tail = "..." + code_tail
+    lines.append(f"CODE:\n{code_tail}")
+    # Show printed output (truncated).
+    if output.strip():
+        out_tail = output[-1500:] if len(output) > 1500 else output
+        lines.append(f"OUTPUT:\n{out_tail}")
+    # Show exception if any.
+    if repl.last_failed and repl.last_error:
+        err_tail = repl.last_error[-1000:]
+        lines.append(f"ERROR:\n{err_tail}")
+    # Show state snapshot.
+    lines.append(_snapshot(repl))
+    return "\n\n".join(lines)
+
+
 def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
     """Iterative SEC research: model calls SEC tools freely, harness validates."""
     tools = sec_tools()
@@ -701,14 +732,18 @@ def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
         repl.namespace.pop("result", None)
         output = repl.execute(code)
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
+        # Always record what happened so the model can learn from it.
+        history.append(_observation(code, output, repl))
         candidate = repl.namespace.get("result")
         if repl.last_failed:
-            err_tail = (repl.last_error or output)[-400:]
-            last_feedback = (f"Execution failed: {err_tail}\nReuse variables already set; "
-                             'inspect(inspect(mode="last_error"), inspect(mode="validation"), '
-                             'inspect("cik", mode="keys")) to repair without redoing work.')
+            last_feedback = (
+                f"Execution failed. Review the ERROR above and inspect state:\n"
+                '  print(inspect(mode="last_error"))\n'
+                '  print(inspect(mode="validation"))\n'
+                '  print(inspect("cik", mode="keys"))\n'
+                "Reuse variables already set; repair and resubmit."
+            )
             repl.validation = {"status": "execution_failed", "errors": [repl.last_error or output]}
-            history.append(last_feedback)
             print(f"VALIDATION: {last_feedback}", flush=True)
             continue
         if candidate is not None and is_final_answer(candidate):
@@ -720,11 +755,9 @@ def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
                 return extract_answer(candidate)
             last_feedback = "Result rejected: " + "; ".join(errors)
             print(f"VALIDATION: {last_feedback}", flush=True)
-            history.append(last_feedback)
             continue
         last_feedback = "Continue research; no final result submitted yet."
         repl.validation = {"status": "not_submitted"}
-        history.append(last_feedback)
 
     print(f"Research stopped after {max_steps} steps without a verified result.")
     return None
