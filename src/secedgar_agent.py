@@ -508,17 +508,8 @@ def research_complete(result: object, contract: CompletionContract,
     return errors
 
 
-def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
-    contract = make_contract(question)  # Freeze before the model is called.
-    if contract.kind == "unsupported":
-        print("Unsupported for automatic verification: only net-income/debt concept discovery "
-              "and financial-ratio questions are currently supported.")
-        return None
-
-    if contract.kind == 'financial_research' and max_steps == MAX_STEPS:
-        max_steps = RESEARCH_STEPS
-    repl = REPL()
-    repl.validation = {"status": "not_checked"}
+def sec_tools() -> dict:
+    """Return the SEC tool namespace available to the model in the REPL."""
     retrieved_documents = {}
     def tracked_filing_text(cik, accession, primary_document):
         document = get_filing_text(cik, accession, primary_document)
@@ -532,124 +523,145 @@ def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
                                 fetch=tracked_filing_text)
     def tracked_debt_review(cik, accession):
         return review_debt_footnote(cik, accession, fetch=tracked_filing_text)
-    repl.namespace.update({"research_filings": tracked_research_filings,
-                           "prepare_evidence": prepare_evidence,
-                           "make_trend_indicators": make_trend_indicators,
-                           "review_debt_footnote": tracked_debt_review,
-                           "financial_trends": financial_trends,
-                           "SUPPORTED_ONTOLOGY_METRICS": ('net_income_loss', 'total_interest_bearing_debt'),
-                           "get_cik": get_cik, "get_filings": get_filings,
-                           "get_company_facts": get_company_facts,
-                           "get_recent_filings": get_recent_filings,
-                           "get_observations": get_observations,
-                           "get_annual_observations": get_annual_observations,
-                           "find_concepts": find_concepts,
-                           "DEBT_STRATEGIES": DEBT_STRATEGIES,
-                           "normalize_concept": normalize_concept,
-                           "select_observation": select_observation,
-                           "build_debt_composition": build_debt_composition,
-                           "get_filing_text": tracked_filing_text,
-                           "search_filing": search_filing,
-                           "filing_url": filing_url})
-    if contract.kind == "concept_discovery":
-        schema = ("result = {'company': company_name, 'cik': cik, "
-                  "'net_income_concepts': complete_list, 'debt_concepts': complete_list}")
-        scope = ("Find ALL us-gaap concept names matching these case-insensitive substrings: "
-                 "net_income_concepts: netincome, netloss, incomeloss; "
-                 "debt_concepts: debt, notespayable, borrowings. "
-                 "These are lexical matches, not a classification of debt balances. "
-                 "Submit the COMPLETE lists, not selected examples.")
-    elif contract.kind == 'financial_research':
-        schema = ("result = {'company': company_name, 'cik': cik, 'question': question_text, "
-                  "'findings': [{'statement': text, 'accession': accession, 'excerpt': quoted_excerpt}], "
-                  "'financial_indicators': [...], 'direct_evidence': [...], "
-                  "'limitations': [text, ...], "
-                  "'conclusion': 'insufficient_evidence', "
-                  "'sources': [{'accession': accession, 'url': sec_filing_url, "
-                  "'form': '10-K', 'filing_date': 'YYYY-MM-DD'}, ...]}")
-        scope = ("This is qualitative research, NOT a financial ratio task. "
-                 "First call evidence = research_filings(cik, forms=['10-K','10-Q','8-K'], "
-                 "terms=['Project Jupiter','force majeure','New Mexico','data center','lease commitments','liquidity'], max_filings=30). "
-                 "This deterministic helper returns sources, findings with verbatim excerpts, failures, searched and limitations. "
-                 "Reuse evidence across steps; do not manually loop over filings or repeat retrieval. "
-                 "Do NOT assign evidence['findings'] directly to result['findings']; these are keyword hits, not conclusions. "
-                 "Interpret at most five distinct material excerpts into substantive disclosure statements with the original accession and exact verbatim excerpt. "
-                 "Call trends = financial_trends(cik, periods=3); its schema is a dictionary with rows (each row has period, accession, metrics dictionary) and changes list, NOT a list of periods. Call prepared = prepare_evidence(evidence, trends) for compact evidence. "
-                 "For financial_indicators use make_trend_indicators(trends, evidence) to produce accession-verified quantitative observations directly from XBRL; do not invent filing-text excerpts for XBRL numbers. Each indicator has statement, metric, value, period, accession, evidence_type=xbrl, and comparison provenance. These are documented financial indicators, NOT proof of Project Jupiter causation. "
-                 "Use sources=evidence['sources']; financial_indicators and direct_evidence may be empty if unsupported. "
-                 "A valid insufficient_evidence conclusion requires no causal proof. "
-                 "If no sources were retrieved, report failure rather than invent sources. "
-                 "Never treat a search-term match as documented causation; direct_evidence requires an explicit causal statement. "
-                 "The ontology supports ONLY net_income_loss and total_interest_bearing_debt for find_concepts; financial_trends is a SEPARATE helper with six financial metrics, including capital_expenditures, operating_cash_flow, free_cash_flow, cash_and_equivalents, debt_carrying_amount and net_income. Never call get_annual_observations with a derived metric name. "
-                 "never call find_concepts for capex, lease, cash flow, or other metrics. "
-                 "Avoid calling build_debt_composition for research tasks unless specifically needed. "
-                 "Do not claim that a source was searched if retrieval failed.")
-    else:
-        schema = ("result = {'company': company_name, 'cik': cik, 'period': 'YYYY-MM-DD', "
-                  "'net_income': number, 'total_debt': number, 'ratio': number, "
-                  "'sources': [SEC_accession_number, ...], "
-                  "'debt_method': 'current_plus_noncurrent', 'debt_components': [{'concept': us_gaap_name, 'value': number}, ...]}")
-        scope = ("Use annual 10-K NetIncomeLoss and year-end debt observations from the same "
-                 "period; do not double-count overlapping debt concepts. "
-                 "Choose debt_method from: {', '.join(DEBT_STRATEGIES)}. Use ONLY the exact components for that method. Explain your debt definition in printed findings. "
-                 "Verification checks observations and arithmetic, not accounting judgment.")
+    return {
+        "research_filings": tracked_research_filings,
+        "prepare_evidence": prepare_evidence,
+        "make_trend_indicators": make_trend_indicators,
+        "review_debt_footnote": tracked_debt_review,
+        "financial_trends": financial_trends,
+        "SUPPORTED_ONTOLOGY_METRICS": ('net_income_loss', 'total_interest_bearing_debt'),
+        "get_cik": get_cik, "get_filings": get_filings,
+        "get_company_facts": get_company_facts,
+        "get_recent_filings": get_recent_filings,
+        "get_observations": get_observations,
+        "get_annual_observations": get_annual_observations,
+        "find_concepts": find_concepts,
+        "DEBT_STRATEGIES": DEBT_STRATEGIES,
+        "normalize_concept": normalize_concept,
+        "select_observation": select_observation,
+        "build_debt_composition": build_debt_composition,
+        "get_filing_text": tracked_filing_text,
+        "search_filing": search_filing,
+        "filing_url": filing_url,
+        "_retrieved_documents": retrieved_documents,
+    }
 
-    instructions = f"""You are researching an SEC EDGAR question in a persistent Python REPL.
-Use the provided functions: get_cik(company), get_company_facts(cik),
-get_recent_filings(cik, form=None), get_observations(cik, concept, unit="USD"),
-get_annual_observations(cik, concept), find_concepts(cik, metric="total_interest_bearing_debt"),
-find_concepts(cik, metric="net_income_loss").
-SUPPORTED_ONTOLOGY_METRICS contains the ONLY supported metric names; do not invent others.
-get_filings(cik) is available for advanced exploration but returns SEC parallel arrays.
+
+def build_prompt(question: str, history: list, last_feedback: str = "") -> str:
+    instructions = """You are researching an SEC EDGAR question in a persistent Python REPL.
+Use the provided functions to explore SEC filings and financial data freely.
+Available helpers: get_cik(company), get_company_facts(cik), get_recent_filings(cik, form=None),
+get_observations(cik, concept, unit="USD"), get_annual_observations(cik, concept),
+find_concepts(cik, metric), research_filings(cik, forms, terms, max_filings),
+review_debt_footnote(cik, accession), financial_trends(cik, periods),
+prepare_evidence(evidence, trends), make_trend_indicators(trends, evidence),
+build_debt_composition(cik, period, accession, method), select_observation(observations, ...).
+SUPPORTED_ONTOLOGY_METRICS contains the only supported metric names for find_concepts.
+get_filings(cik) returns SEC parallel arrays for advanced exploration.
 Concept names may be unprefixed or use the us-gaap: prefix; both are accepted.
-Use EXACT concept names from find_concepts, never metric names or guessed aliases as XBRL concepts.
+Use EXACT concept names from find_concepts as XBRL concept names.
 find_concepts(cik, metric) accepts semantic metrics; get_annual_observations(cik, concept)
 accepts ONLY exact US-GAAP XBRL concepts, e.g. NetIncomeLoss (not net_income_loss).
-Use select_observation(get_annual_observations(cik, "NetIncomeLoss"),
-period=period, accession=accession, duration=True) for annual net income.
-IMPORTANT: select_observation() returns an observation DICTIONARY, not a number.
-Extract the numeric value using ni_observation["val"] before calculating a ratio.
+Use select_observation() to pick a specific observation from a list; it returns a dict with a "val" key.
 Read the official company name from get_company_facts(cik)["entityName"];
 never invent, substitute, or hard-code a company name in the submitted result.
-Calculate ratios using full numeric precision: ratio = net_income / total_debt.
-Do NOT round ratio or any numeric value in the result dictionary.
+Calculate ratios using full numeric precision. Do NOT round numeric values in the result dict.
 Rounding is permitted ONLY in human-readable print output.
-For RATIO tasks, use review_debt_footnote(cik, accession) to inspect the 10-K debt footnote; this provides evidence for accounting review but cannot independently certify exhaustive coverage.
-For RATIO tasks only, call build_debt_composition(cik, period=period, accession=accession,
-method="current_plus_noncurrent") to get total_debt, debt_method, debt_components.
-The helper raises on missing components, never substitutes zero. Other available
-strategies are in DEBT_STRATEGIES; a strategy is not proof of complete debt coverage.
-Use bare names in submitted debt_components for clarity.
-Prefer normalized helpers. Do NOT access a nonexistent observations key: SEC XBRL values are under units["USD"].
-Do not import SEC libraries or make HTTP requests. Reuse persistent variables.
-Company facts: facts['entityName'], facts['cik'], facts['facts']['us-gaap'][concept]['units']['USD'].
+Use review_debt_footnote(cik, accession) to inspect a 10-K debt footnote.
+Use build_debt_composition(cik, period=period, accession=accession, method="current_plus_noncurrent")
+to get total_debt, debt_method, and debt_components. The helper raises on missing components.
+Other strategies are in DEBT_STRATEGIES. Use bare concept names in debt_components.
+SEC XBRL values are under facts['facts']['us-gaap'][concept]['units']['USD']. 
 Observations contain val, start (for durations), end, form, filed, accn.
-Find concepts inside the us-gaap dictionary. Print short observations only (at most 5 items).
-Use get_recent_filings(cik, "10-K") to find the latest annual report.
-For RESEARCH tasks prefer research_filings(cik, forms, terms, max_filings), which retrieves and searches SEC primary documents deterministically.
-The final research answer may be a sentence or paragraph. The harness will append APA-style in-text citations and a References section using verified SEC filing metadata. Provide concise, specific, source-backed statements.
-When the question requests latest, you MUST use its reportDate, not an earlier comparative year.
-Use get_annual_observations for 10-K facts; match report end dates and filing accessions.
-Use find_concepts to discover ontology-tagged debt candidates, then choose ONE compatible debt strategy.
-Never sum all concepts containing "debt". Never use (value or 0) for missing financial values: explicitly reject None. Reuse variables from earlier steps.
-Completion contract (fixed by harness): {contract.kind}; scope: {contract.scope}.
-{scope}
-Generate ONE executable Python step, code only; no XML or commentary.
-When evidence is sufficient, assign a dictionary named result:
-{schema}
+Print short observations only (at most 5 items). Reuse persistent variables across steps.
+When you have sufficient evidence, assign a dictionary named result with your findings.
+The harness will validate and format the result. Generate ONE executable Python step, code only.
 Do not set research_complete; only the harness decides when to stop.
 """
-    observations: list[str] = []
-    # Keep critical failure details visible; the REPL holds complete objects.
-    def observation(step: int, feedback: str, output: str) -> str:
-        tail = output[-1200:] if "Traceback" in output else output[:900]
-        return f"Step {step}: {feedback}\nREPL output: {tail}"
-    last_rejection = None
-    identical_rejections = 0
-    for step in range(1, max_steps + 1):
-        prompt = (f"{instructions}\nQuestion:\n{question}\n\nRecent steps and feedback:\n"
-                  f"{' '.join(observations[-3:]) or '(none)'}\n"
-                  "Continue with one Python step; do not repeat completed work. Inspect persistent state with print(inspect()), print(inspect('latest', mode='keys')), print(inspect(mode='last_error')), or print(inspect(mode='validation')) when needed. Do not reset successful work.")
+    tail = f"{last_feedback}\n" if last_feedback else ""
+    recent = " ".join(history[-3:]) if history else "(none)"
+    return (f"{instructions}\nQuestion:\n{question}\n\nRecent steps and feedback:\n"
+            f"{tail}{recent}\n"
+            "Continue with one Python step; do not repeat completed work. "
+            "Inspect persistent state with print(inspect()), print(inspect('latest', mode='keys')), "
+            "print(inspect(mode='last_error')), or print(inspect(mode='validation')) when needed. "
+            "Do not reset successful work.")
+
+
+def validate_result(candidate: object, retrieved_documents: dict) -> list[str]:
+    """Generic validation for any model-submitted result dict."""
+    if not isinstance(candidate, dict):
+        return ["result must be a dictionary."]
+    errors: list[str] = []
+    if not isinstance(candidate.get("company"), str) or not candidate["company"].strip():
+        errors.append("result must contain a non-empty 'company' string.")
+    if not isinstance(candidate.get("cik"), str) or not re.fullmatch(r"\d{10}", candidate.get("cik", "")):
+        errors.append("result must contain a 10-digit 'cik' string.")
+    # Validate cited SEC sources if present.
+    sources = candidate.get("sources")
+    if isinstance(sources, list) and sources:
+        valid_accessions = set()
+        for i, src in enumerate(sources):
+            if isinstance(src, dict):
+                acc = src.get("accession", "")
+                url = src.get("url", "")
+                if not re.fullmatch(r"\d{10}-\d{2}-\d{6}", acc):
+                    errors.append(f"sources[{i}] has invalid accession: {acc!r}.")
+                if not url.startswith("https://www.sec.gov/Archives/edgar/data/"):
+                    errors.append(f"sources[{i}] has invalid SEC URL.")
+                else:
+                    valid_accessions.add(acc)
+                    doc = retrieved_documents.get(acc)
+                    if not doc or doc.get("url") != url:
+                        errors.append(f"sources[{i}] accession {acc} was not retrieved in this run.")
+            elif isinstance(src, str) and re.fullmatch(r"\d{10}-\d{2}-\d{6}", src):
+                valid_accessions.add(src)
+                doc = retrieved_documents.get(src)
+                if not doc:
+                    errors.append(f"source accession {src} was not retrieved in this run.")
+    # Validate findings/excerpts if present.
+    for field in ("findings", "financial_indicators", "direct_evidence"):
+        items = candidate.get(field)
+        if not isinstance(items, list):
+            continue
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append(f"{field}[{i}] must be a dictionary.")
+                continue
+            if item.get("evidence_type") == "xbrl":
+                continue
+            excerpt = item.get("excerpt")
+            if isinstance(excerpt, str) and excerpt.strip():
+                acc = item.get("accession", "")
+                doc = retrieved_documents.get(acc)
+                if not doc or excerpt.strip() not in doc.get("text", ""):
+                    errors.append(f"{field}[{i}] excerpt is not verbatim text from its cited filing.")
+    return errors
+
+
+def is_final_answer(candidate: object) -> bool:
+    """Check whether the candidate looks like a complete research result."""
+    if not isinstance(candidate, dict):
+        return False
+    return bool(candidate.get("company") and candidate.get("cik"))
+
+
+def extract_answer(candidate: object) -> dict:
+    """Return the candidate result ready for formatting."""
+    return candidate
+
+
+def research(question: str, max_steps: int = MAX_STEPS) -> dict | None:
+    """Iterative SEC research: model calls SEC tools freely, harness validates."""
+    tools = sec_tools()
+    retrieved_documents = tools.pop("_retrieved_documents")
+    repl = REPL(namespace=tools)
+    repl.validation = {"status": "not_checked"}
+    history: list[str] = []
+    last_feedback = ""
+
+    for _ in range(max_steps):
+        prompt = build_prompt(question, history, last_feedback)
         try:
             response = llm_query(prompt)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -658,86 +670,38 @@ Do not set research_complete; only the harness decides when to stop.
         try:
             code = extract_code(response)
         except (SyntaxError, ValueError) as exc:
-            feedback = f"Invalid Python: {exc}. Return only executable Python."
-            print(f"INVALID CODE: {feedback}", flush=True)
-            observations.append(feedback)
+            last_feedback = f"Invalid Python: {exc}. Return only executable Python."
+            print(f"INVALID CODE: {last_feedback}", flush=True)
+            history.append(last_feedback)
             continue
         repl.namespace.pop("result", None)
         output = repl.execute(code)
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
-        failed = repl.last_failed
         candidate = repl.namespace.get("result")
-        if failed:
+        if repl.last_failed:
             err_tail = (repl.last_error or output)[-400:]
-            feedback = f"Execution failed: {err_tail}\nReuse variables already set; inspect(inspect(mode=\"last_error\"), inspect(mode=\"validation\"), inspect(\"cik\", mode=\"keys\")) to repair without redoing work."
+            last_feedback = (f"Execution failed: {err_tail}\nReuse variables already set; "
+                             'inspect(inspect(mode="last_error"), inspect(mode="validation"), '
+                             'inspect("cik", mode="keys")) to repair without redoing work.')
             repl.validation = {"status": "execution_failed", "errors": [repl.last_error or output]}
-        elif candidate is not None:
-            cik = candidate.get("cik") if isinstance(candidate, dict) else None
-            try:
-                facts = get_company_facts(cik) if isinstance(cik, str) else None
-                errors = research_complete(candidate, contract, facts)
-                if contract.kind == 'financial_research' and isinstance(candidate, dict):
-                    for source in candidate.get('sources', []) if isinstance(candidate.get('sources'), list) else []:
-                        if isinstance(source, dict):
-                            doc = retrieved_documents.get(source.get('accession'))
-                            if not doc or doc['url'] != source.get('url'):
-                                errors.append('Every cited SEC document must be retrieved using get_filing_text in this run.')
-                    trend_rows = repl.namespace.get('trends', {})
-                    trend_rows = trend_rows.get('rows', []) if isinstance(trend_rows, dict) else []
-                    xbrl_expected = {
-                        (r['accession'], r['period'], metric): item['value']
-                        for r in trend_rows if isinstance(r, dict)
-                        for metric, item in r.get('metrics', {}).items()
-                        if isinstance(item, dict) and 'value' in item
-                    }
-                    for indicator in candidate.get('financial_indicators', []):
-                        if isinstance(indicator, dict) and indicator.get('evidence_type') == 'xbrl':
-                            key = (indicator.get('accession'), indicator.get('period'), indicator.get('metric'))
-                            if key not in xbrl_expected or indicator.get('value') != xbrl_expected[key]:
-                                errors.append('XBRL indicator does not match retrieved accession, period and metric.')
-                    for field in ('findings', 'financial_indicators', 'direct_evidence'):
-                        for finding in candidate.get(field, []) if isinstance(candidate.get(field), list) else []:
-                            if isinstance(finding, dict) and finding.get('evidence_type') != 'xbrl' and isinstance(finding.get('excerpt'), str):
-                                doc = retrieved_documents.get(finding.get('accession'))
-                                if not doc or finding['excerpt'].strip() not in doc['text']:
-                                    errors.append(f'{field} excerpt is not verbatim text from its cited filing.')
-            except Exception as exc:  # noqa: BLE001
-                errors = [f"SEC verification failed: {type(exc).__name__}: {exc}"]
+            history.append(last_feedback)
+            print(f"VALIDATION: {last_feedback}", flush=True)
+            continue
+        if candidate is not None and is_final_answer(candidate):
+            errors = validate_result(candidate, retrieved_documents)
             repl.validation = {"status": "rejected" if errors else "accepted",
-                               "errors": list(errors),
-                               "result_type": contract.kind}
+                               "errors": list(errors)}
             if not errors:
-                if contract.kind == 'financial_research':
-                    print(format_research_answer(candidate))
-                elif contract.kind == 'financial_ratio':
-                    # Compute debt review first so formatter can cite it.
-                    accession = candidate.get('sources', [None])[0]
-                    review = repl.namespace.get('debt_review')
-                    if not isinstance(review, dict) or not review.get('source') or review['source'].get('accession') != accession:
-                        review = tracked_debt_review(candidate['cik'], accession)
-                    candidate['debt_review'] = review
-                    print(format_ratio_answer(candidate, retrieved_documents))
-                else:
-                    print(candidate)
-                return candidate
-            feedback = "Result rejected: " + "; ".join(errors)
-            # Repeated identical validation errors indicate no progress, even
-            # if the model changes code or resubmits equivalent values.
-            fingerprint = tuple(sorted(errors))
-            if fingerprint == last_rejection:
-                identical_rejections += 1
-            else:
-                last_rejection = fingerprint
-                identical_rejections = 1
-            if identical_rejections >= MAX_IDENTICAL_REJECTIONS:
-                print(f"STALLED: {identical_rejections} identical rejections. {feedback}", flush=True)
-                return None
-        else:
-            feedback = "Continue research; no final result submitted yet."
-            repl.validation = {"status": "not_submitted"}
-        observations.append(observation(step, feedback, output))
-        if feedback and feedback != "Continue research; no final result submitted yet.":
-            print(f"VALIDATION: {feedback}", flush=True)
+                print(format_research_answer(candidate))
+                return extract_answer(candidate)
+            last_feedback = "Result rejected: " + "; ".join(errors)
+            print(f"VALIDATION: {last_feedback}", flush=True)
+            history.append(last_feedback)
+            continue
+        last_feedback = "Continue research; no final result submitted yet."
+        repl.validation = {"status": "not_submitted"}
+        history.append(last_feedback)
+
     print(f"Research stopped after {max_steps} steps without a verified result.")
     return None
 
