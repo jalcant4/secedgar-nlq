@@ -233,14 +233,23 @@ def parse_accessions_in_answer(answer: str | None) -> set[str]:
 
 
 def score_answer(answer: str | None, expected_starts: dict[str, str | None],
-                 expected_filing_dates: dict[str, str] | None = None) -> dict[str, dict[str, str]]:
+                 expected_filing_dates: dict[str, str] | None = None,
+                 trace_content: str | None = None) -> dict[str, dict[str, str]]:
     """Score period-start and (optionally) filing-date accuracy.
+
+    Looks for CSV/table data in the FINAL: answer first, then falls back to
+    the full trace content (where the model may have output the table before
+    the FINAL: marker).
 
     Returns a dict mapping accession_number → {period_start: ..., filing_date: ...}
     where each value is one of correct/incorrect/unknown/unverified.
     """
     reported_starts = parse_period_starts(answer)
+    if not reported_starts and trace_content:
+        reported_starts = parse_period_starts(trace_content)
     reported_dates = parse_filing_dates(answer) if expected_filing_dates else {}
+    if not reported_dates and trace_content and expected_filing_dates:
+        reported_dates = parse_filing_dates(trace_content)
     scores: dict[str, dict[str, str]] = {}
     for accn, exp_start in expected_starts.items():
         entry: dict[str, str] = {}
@@ -311,7 +320,7 @@ def run_trial(variant: str, trial_index: int, question: str, expected_starts: di
 
     steps = call_count[0]
     success = bool(answer and "FINAL:" in answer)
-    scores = score_answer(answer, expected_starts, expected_filing_dates=expected_filing_dates)
+    scores = score_answer(answer, expected_starts, expected_filing_dates=expected_filing_dates, trace_content=content)
     issues_d = issues_detected[0]
     # Count corrections: issues detected minus issues still present in final answer
     incorrect_count = sum(
