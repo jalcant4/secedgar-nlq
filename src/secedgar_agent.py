@@ -384,13 +384,36 @@ Evidence provenance (optional helpers):
 MAX_OUTPUT_CHARS = 2000
 
 
+GROUNDING_GUIDANCE = """Evidence-grounded research:
+Use retrieved source data as the basis for factual claims.
+Distinguish four kinds of information:
+- Retrieved: explicitly present in an original source.
+- Derived: calculated from identified source values.
+- Inferred: reasoned from evidence but not directly stated.
+- Unsupported: not established by available evidence.
+When a requested value is missing:
+- Investigate an appropriate primary source when useful.
+- Do not invent values to complete a table or calculation.
+- If the value remains unavailable, report it as unknown.
+For derived values, preserve the inputs and calculation.
+For inferred values, identify the assumption or uncertainty.
+An Evidence object records provenance but does not itself prove a claim.
+verify_claim() can compare claims against original retrieved records.
+Do not verify a claim against another model-generated claim.
+Before returning FINAL:
+- Compare important conclusions with retrieved observations.
+- Resolve contradictions when evidence permits.
+- Check that citations support the corresponding claims.
+- Identify material limitations and unresolved uncertainty.
+The model decides whether further research, verification, or finalization is appropriate.
+No specific research workflow is required.
+"""
+
+
 def build_prompt(question: str, history: list, last_feedback: str = "", remaining: int | None = None) -> str:
     tail = f"{last_feedback}\n" if last_feedback else ""
     recent = " ".join(history[-3:]) if history else "(none)"
-    # Build evidence summary from current REPL state (if available)
-    evidence = ""
-    # We don't have repl here; skip evidence summary in build_prompt
-    lines = [f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\nQuestion:\n{question}\n\n"
+    lines = [f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\n{GROUNDING_GUIDANCE}\n\nQuestion:\n{question}\n\n"
              f"Recent steps and feedback:\n{tail}{recent}"]
     if remaining is not None and remaining <= 3:
         lines.append(
