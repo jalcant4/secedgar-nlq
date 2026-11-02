@@ -7,6 +7,8 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
+from typing import Any
 
 from accounting import DEBT_STRATEGIES, build_debt_composition, find_concepts, review_debt_footnote
 from edgar import get_cik, get_company_facts, get_filings
@@ -135,6 +137,37 @@ def is_final_response(response: str) -> bool:
     return response.strip().startswith("FINAL:")
 
 
+@dataclass(frozen=True)
+class Evidence:
+    """Lightweight provenance record for SEC research findings."""
+    claim: str
+    value: Any
+    source: str
+    method: str = "retrieved"  # "retrieved" | "derived" | "inferred" | "unsupported"
+
+
+def verify_claim(claim_dict: dict, source_list: list[dict], key_field: str = "accessionNumber") -> dict:
+    """Compare claimed values against original retrieved records.
+
+    Returns a dict mapping each claimed key to a verification result:
+      {key: {"match": bool, "expected": <claimed>, "actual": <retrieved>}}
+    """
+    results = {}
+    for key, claimed_value in claim_dict.items():
+        found = None
+        for record in source_list:
+            if record.get(key_field) == claim_dict.get(key_field):
+                found = record
+                break
+        actual_value = found.get(key) if found else None
+        results[key] = {
+            "match": actual_value == claimed_value,
+            "expected": claimed_value,
+            "actual": actual_value,
+        }
+    return results
+
+
 def sec_tools() -> dict:
     """Return the SEC tool namespace available to the model in the REPL."""
     retrieved_documents = {}
@@ -170,6 +203,8 @@ def sec_tools() -> dict:
         "get_filing_text": tracked_filing_text,
         "search_filing": search_filing,
         "filing_url": filing_url,
+        "Evidence": Evidence,
+        "verify_claim": verify_claim,
         "_retrieved_documents": retrieved_documents,
     }
 
@@ -234,6 +269,22 @@ Citation rules:
   - Do not cite a source that was not retrieved or inspected.
   - Distinguish retrieved facts from calculations and inferences.
   - If a claim cannot be substantiated, acknowledge the limitation.
+  - When multiple sources share the same author and year, disambiguate
+    with lowercase suffixes (2026a, 2026b, 2026c) in both the text
+    citations and the reference list. The suffix order follows the
+    chronological order of filing dates.
+
+Evidence handling:
+  Never replace missing observations with guessed or inferred values.
+  A derived value must identify its inputs and assumptions.
+  If a requested field is unavailable, use N/A and explain why.
+  If evidence contradicts an earlier calculation, correct before FINAL:.
+  Do not present inferred values as retrieved SEC observations.
+  Before returning FINAL:, review your conclusions against the
+  observations already obtained. Verify that every factual claim
+  in the RESEARCH SUMMARY is supported by an observation in the
+  REPL state. If a claim references a filing, confirm that you
+  actually retrieved that filing's metadata.
 
 Rules:
   - Return ONLY a code fence with Python code, or a `FINAL:` line.
@@ -291,6 +342,10 @@ For background context outside SEC filings, call web_search(query, max_results=5
 Web results are supplementary — they provide context but NEVER replace SEC filings as primary evidence.
 Never cite a web result as an SEC source.
 
+Standard library only: Use Python's built-in modules for CSV generation.
+Do not import pandas, numpy, or other optional third-party packages.
+If an import fails, do not retry it without changing the environment.
+
 Source attribution:
   get_recent_filings() provides filing metadata, including accessionNumber,
   filingDate, reportDate, and primaryDocument.
@@ -304,6 +359,25 @@ Source attribution:
   and URL to construct APA references.
   Do not infer a fiscal-period start solely from reportDate.
   A citation should support the specific claim being made.
+
+Evidence provenance (optional helpers):
+  Evidence(claim, value, source, method) — frozen dataclass for tracking
+  whether a finding was retrieved from SEC, derived from other values,
+  inferred from assumptions, or unsupported. The method field distinguishes
+  these categories: "retrieved" | "derived" | "inferred" | "unsupported".
+  Example:
+    rec = Evidence(
+        claim="Q2 2026 reporting-period end",
+        value="2026-06-30",
+        source=filing_url(cik, accn, doc),
+        method="retrieved",
+    )
+  verify_claim(claim_dict, source_list, key_field) — compares a dict of
+  claimed values against original retrieved records. Returns verification
+  results per key: {"match": bool, "expected": <claimed>, "actual": <retrieved>}.
+  Use this before FINAL: to catch contradictions between your conclusions
+  and the actual retrieved data.
+  Never silently promote an inference into a retrieved observation.
 """
 
 
@@ -313,6 +387,9 @@ MAX_OUTPUT_CHARS = 2000
 def build_prompt(question: str, history: list, last_feedback: str = "", remaining: int | None = None) -> str:
     tail = f"{last_feedback}\n" if last_feedback else ""
     recent = " ".join(history[-3:]) if history else "(none)"
+    # Build evidence summary from current REPL state (if available)
+    evidence = ""
+    # We don't have repl here; skip evidence summary in build_prompt
     lines = [f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\nQuestion:\n{question}\n\n"
              f"Recent steps and feedback:\n{tail}{recent}"]
     if remaining is not None and remaining <= 3:
@@ -332,6 +409,24 @@ def build_prompt(question: str, history: list, last_feedback: str = "", remainin
             "print(inspect(mode='last_error')) when needed. "
             "Do not reset successful work."
         )
+    return "".join(lines)
+
+
+def _evidence_summary(repl: REPL) -> str:
+    """Compact summary of all persistent REPL variables for the model."""
+    vars_dict = repl._namespace or {}
+    lines = ["PERSISTENT STATE:"]
+    for key, val in vars_dict.items():
+        if key.startswith("_"):
+            continue
+        t = type(val).__name__
+        if isinstance(val, list):
+            lines.append(f"  {key}: list[{t}] (len={len(val)})")
+        elif isinstance(val, dict):
+            lines.append(f"  {key}: dict (keys={list(val.keys())[:8]})")
+        else:
+            lines.append(f"  {key}: {t}")
+    return "\n".join(lines)
     return "".join(lines)
 
 

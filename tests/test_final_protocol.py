@@ -420,6 +420,90 @@ class TestStructuredFinalAnswer:
         )
         assert agent.is_final_response(answer) is True
 
+    def test_prompt_contains_evidence_handling_rules(self):
+        """Normal prompt includes evidence handling guidance."""
+        prompt = agent.build_prompt("test", [], remaining=10)
+        assert "Never replace missing observations with guessed" in prompt
+        assert "N/A and explain why" in prompt
+        assert "review your conclusions against the" in prompt
+        assert "already obtained" in prompt
+
+    def test_prompt_contains_apa_disambiguation_rule(self):
+        """Normal prompt includes APA year-suffix disambiguation guidance."""
+        prompt = agent.build_prompt("test", [], remaining=10)
+        assert "2026a, 2026b, 2026c" in prompt or "suffixes" in prompt.lower()
+        assert "filing dates" in prompt
+
+    def test_prompt_contains_standard_library_guidance(self):
+        """Normal prompt instructs to use standard library, not pandas."""
+        prompt = agent.build_prompt("test", [], remaining=10)
+        assert "standard library" in prompt.lower()
+        assert "pandas" in prompt.lower()
+
+
+class TestEvidenceProvenance:
+    """Evidence dataclass and verify_claim helper."""
+
+    def test_evidence_dataclass_defaults(self):
+        e = agent.Evidence(claim="x", value=1, source="url")
+        assert e.claim == "x"
+        assert e.value == 1
+        assert e.source == "url"
+        assert e.method == "retrieved"
+
+    def test_evidence_dataclass_immutable(self):
+        e = agent.Evidence(claim="x", value=1, source="url")
+        with pytest.raises(AttributeError):
+            e.claim = "y"
+
+    def test_evidence_dataclass_hashable(self):
+        e1 = agent.Evidence(claim="x", value=1, source="url")
+        e2 = agent.Evidence(claim="x", value=1, source="url")
+        assert e1 == e2
+        assert hash(e1) == hash(e2)
+
+    def test_verify_claim_all_match(self):
+        sources = [
+            {"accessionNumber": "0001-26-001", "reportDate": "2026-06-30"},
+            {"accessionNumber": "0001-26-002", "reportDate": "2026-03-31"},
+        ]
+        claim = {"accessionNumber": "0001-26-001", "reportDate": "2026-06-30"}
+        results = agent.verify_claim(claim, sources)
+        assert results["accessionNumber"]["match"] is True
+        assert results["reportDate"]["match"] is True
+
+    def test_verify_claim_mismatch(self):
+        sources = [
+            {"accessionNumber": "0001-26-001", "reportDate": "2026-06-30"},
+        ]
+        claim = {"accessionNumber": "0001-26-001", "reportDate": "2025-12-31"}
+        results = agent.verify_claim(claim, sources)
+        assert results["reportDate"]["match"] is False
+        assert results["reportDate"]["expected"] == "2025-12-31"
+        assert results["reportDate"]["actual"] == "2026-06-30"
+
+    def test_verify_claim_missing_source(self):
+        sources = [
+            {"accessionNumber": "0001-26-001", "reportDate": "2026-06-30"},
+        ]
+        claim = {"accessionNumber": "0001-26-999", "reportDate": "2026-06-30"}
+        results = agent.verify_claim(claim, sources)
+        assert results["accessionNumber"]["match"] is False
+        assert results["accessionNumber"]["actual"] is None
+
+    def test_verify_claim_custom_key_field(self):
+        sources = [
+            {"cik": "0001769628", "form": "10-Q"},
+        ]
+        claim = {"cik": "0001769628", "form": "10-K"}
+        results = agent.verify_claim(claim, sources, key_field="cik")
+        assert results["form"]["match"] is False
+
+    def test_sec_tools_exposes_evidence_helpers(self):
+        tools = agent.sec_tools()
+        assert tools["Evidence"] is agent.Evidence
+        assert tools["verify_claim"] is agent.verify_claim
+
 
 class TestInvalidCountBugFix:
     """Invalid responses are already in history; they should not double-count."""
