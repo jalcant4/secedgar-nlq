@@ -1,34 +1,30 @@
 [
   {
-    "accessionNumber": "0001769628-26-000104",
-    "filingDate": "2026-03-02",
-    "reportDate": "2025-12-31",
-    "form": "10-K",
-    "primaryDocument": "crwv-20251231.htm",
-    "cik": "0001769628"
-  },
-  {
     "accessionNumber": "0001769628-26-000366",
     "filingDate": "2026-08-12",
     "reportDate": "2026-06-30",
     "form": "10-Q",
-    "primaryDocument": "crwv-20260630.htm",
-    "cik": "0001769628"
+    "primaryDocument": "crwv-20260630.htm"
   },
   {
-    "accessionNumber": "0001769628-26-000201",
-    "filingDate": "2026-05-14",
+    "accessionNumber": "0001769628-26-000222",
+    "filingDate": "2026-05-08",
     "reportDate": "2026-03-31",
     "form": "10-Q",
-    "primaryDocument": "crwv-20260331.htm",
-    "cik": "0001769628"
+    "primaryDocument": "crwv-20260331.htm"
   },
   {
-    "accessionNumber": "0001769628-25-000452",
+    "accessionNumber": "0001769628-26-000104",
+    "filingDate": "2026-03-02",
+    "reportDate": "2025-12-31",
+    "form": "10-K",
+    "primaryDocument": "crwv-20251231.htm"
+  },
+  {
+    "accessionNumber": "0001769628-25-000062",
     "filingDate": "2025-11-13",
     "reportDate": "2025-09-30",
     "form": "10-Q",
-    "primaryDocument": "crwv-20250930.htm",
-    "cik": "0001769628"
+    "primaryDocument": "crwv-20250930.htm"
   }
 ]
