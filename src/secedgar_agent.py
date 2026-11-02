@@ -137,6 +137,19 @@ def is_final_response(response: str) -> bool:
     return response.strip().startswith("FINAL:")
 
 
+def is_draft_response(response: str) -> bool:
+    """Check whether the raw LLM response is a draft for verification."""
+    return response.strip().startswith("DRAFT:")
+
+
+def extract_draft(response: str) -> str:
+    """Extract the draft content after the DRAFT: marker."""
+    stripped = response.strip()
+    if stripped.startswith("DRAFT:"):
+        return stripped.removeprefix("DRAFT:").strip()
+    return stripped.strip()
+
+
 @dataclass(frozen=True)
 class Evidence:
     """Lightweight provenance record for SEC research findings."""
@@ -209,15 +222,18 @@ def sec_tools() -> dict:
     }
 
 
-RESPONSE_PROTOCOL = """Response protocol — two modes only:
+RESPONSE_PROTOCOL = """Response protocol — three modes:
 
-MODE 1 — Working step: Return executable Python code inside a markdown code fence.
+MODE 1 — PYTHON: Return executable Python code inside a markdown code fence.
 The harness executes the code in a persistent REPL. Use this to call SEC helpers,
 inspect data, compute values, and build up state across steps.
 
-MODE 2 — Final answer: Return `FINAL:` followed by a complete, human-readable
-research response. The harness accepts this as the terminal response.
-No result dictionary, no validation, no prescribed structure.
+MODE 2 — DRAFT:: Propose a preliminary answer for verification. The harness
+runs consistency checks and returns the results. The model then decides whether
+to refine the answer (more PYTHON steps) or finalize it with FINAL:.
+
+MODE 3 — FINAL:: Return the completed, verified answer. The harness accepts
+this as the terminal response. No result dictionary, no validation gate.
 
 When structured data is requested, present the table, CSV, or other
 requested format first. End substantive research answers with
@@ -246,7 +262,7 @@ Examples:
   print(facts["entityName"])
   ```
 
-  FINAL:
+  DRAFT:
   Apple Inc.
   Net-income-to-debt ratio for fiscal year 2025
 
@@ -260,6 +276,12 @@ Examples:
   REFERENCES
   Apple Inc. (2025). Form 10-K for the fiscal year ended September 28, 2025.
   U.S. Securities and Exchange Commission. https://www.sec.gov/...
+
+  [After verification feedback, if correct:]
+  FINAL:
+  Apple Inc.
+  Net-income-to-debt ratio for fiscal year 2025
+  ...
 
 Citation rules:
   - Cite the original source supporting each factual claim.
@@ -286,9 +308,16 @@ Evidence handling:
   REPL state. If a claim references a filing, confirm that you
   actually retrieved that filing's metadata.
 
+Verification pass:
+  When you receive DRAFT feedback, use Python to check your claims:
+  - Compare dates, accession numbers, and values against original data.
+  - Run check_period(start, end) for fiscal-period consistency.
+  - Use verify_claim() to compare conclusions against retrieved records.
+  - Resolve any contradictions before returning FINAL:.
+
 Rules:
-  - Return ONLY a code fence with Python code, or a `FINAL:` line.
-  - Do not include commentary, XML, or prose outside the code fence or FINAL: line.
+  - Return ONLY a code fence with Python code, a `DRAFT:` line, or a `FINAL:` line.
+  - Do not include commentary, XML, or prose outside the code fence, DRAFT: line, or FINAL: line.
   - The model decides when it has sufficient evidence to stop.
 """
 
@@ -410,10 +439,11 @@ No specific research workflow is required.
 """
 
 
-def build_prompt(question: str, history: list, last_feedback: str = "", remaining: int | None = None) -> str:
+def build_prompt(question: str, history: list, last_feedback: str = "", remaining: int | None = None, draft: str = "") -> str:
     tail = f"{last_feedback}\n" if last_feedback else ""
     recent = " ".join(history[-3:]) if history else "(none)"
-    lines = [f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\n{GROUNDING_GUIDANCE}\n\nQuestion:\n{question}\n\n"
+    draft_block = f"\nDRAFT to verify:\n{draft}\n" if draft else ""
+    lines = [f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\n{GROUNDING_GUIDANCE}\n\nQuestion:\n{question}\n\n{draft_block}"
              f"Recent steps and feedback:\n{tail}{recent}"]
     if remaining is not None and remaining <= 3:
         lines.append(
@@ -496,6 +526,59 @@ def _error_signature(error: str) -> str:
     return '\n'.join(sig_lines)
 
 
+def verify_draft(draft: str, repl: REPL) -> str:
+    """Run consistency checks on a draft answer and return verification feedback."""
+    issues = []
+
+    # Check for date inconsistencies in CSV-like rows
+    date_rows = re.findall(r'(\d{4}-\d{2}-\d{2})\s*→\s*(\d{4}-\d{2}-\d{2})', draft)
+    for start, end in date_rows:
+        try:
+            from datetime import date
+            if date.fromisoformat(start) > date.fromisoformat(end):
+                issues.append(f"Impossible date range: {start} → {end} (start after end)")
+        except ValueError:
+            pass
+
+    # Check for obvious fabrication indicators
+    suspicious_patterns = [
+        (r'\b202[0-9]-(0[13578]|1[02])-(0[13579])\b', 'End-of-month date not tied to a filing'),
+        (r'\bfiscal period start is \d{4}-\d{2}-\d{2}', 'Invented fiscal-period start'),
+    ]
+    for pattern, desc in suspicious_patterns:
+        if re.search(pattern, draft):
+            issues.append(f"Suspicious pattern: {desc}")
+
+    # Check that any cited accession numbers match retrieved data
+    accn_pattern = r'(\d{10}-\d{2}-\d{6})'
+    cited_accns = set(re.findall(accn_pattern, draft))
+    if cited_accns and 'filings' in repl.namespace:
+        retrieved_accns = {f['accessionNumber'] for f in repl.namespace['filings']}
+        for accn in cited_accns:
+            if accn not in retrieved_accns:
+                issues.append(f"Cited accession {accn} not found in retrieved filings")
+
+    if issues:
+        return (
+            "VERIFICATION ISSUES:\n" + "\n".join(f"  - {i}" for i in issues) + "\n"
+            "Fix these issues or run Python to verify claims. "
+            "Then return FINAL: with corrected evidence."
+        )
+    return (
+        "VERIFICATION PASSED: No obvious consistency issues found.\n"
+        "Run additional checks if needed (verify_claim, check_period, etc.).\n"
+        "Return FINAL: when confident the answer is evidence-grounded."
+    )
+
+
+def check_period(start: str, end: str) -> bool:
+    """Check that a fiscal-period start is not after its end date."""
+    from datetime import date
+    if not start or start in (None, "N/A", "unknown"):
+        return True
+    return date.fromisoformat(start) <= date.fromisoformat(end)
+
+
 def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
     """Iterative SEC research: model decides what to do, harness executes."""
     repl = REPL(namespace=sec_tools())
@@ -503,10 +586,11 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
     invalid_count = 0
     last_error_sig: str | None = None
     repeated_errors = 0
+    draft = ""
 
     while len(history) < max_steps:
         remaining = max_steps - len(history)
-        prompt = build_prompt(question, history, remaining=remaining)
+        prompt = build_prompt(question, history, remaining=remaining, draft=draft)
         try:
             response = llm_query(prompt)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -516,6 +600,14 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
             answer = response.strip()
             print(answer)
             return answer
+        if is_draft_response(response):
+            draft = extract_draft(response)
+            feedback = verify_draft(draft, repl)
+            history.append(feedback)
+            print(f"DRAFT: {draft}", flush=True)
+            print(feedback, flush=True)
+            draft = ""  # Clear draft so it's not echoed again
+            continue
         try:
             code = extract_code(response)
             invalid_count = 0
