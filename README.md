@@ -1,6 +1,54 @@
 # SEC EDGAR Natural-Language Query Agent
 
-A local Python REPL agent for retrieving, calculating, and investigating public-company SEC EDGAR disclosures. It uses a configurable OpenAI-compatible local `llama.cpp` endpoint and deterministic validation of supported result contracts.
+> ## ⚠️ Proof of Concept
+>
+> **secedgar-nlq is a proof of concept, not a production system.**
+>
+> 1. It converts a natural-language query into SEC EDGAR API queries that are
+>    executed inside a Python environment (a persistent REPL driven by a local
+>    LLM).
+> 2. It enforces the LLM to programmatically decompose the question and produce
+>    a programmatic solution — Python code against the SEC tooling — rather
+>    than answering from memory.
+> 3. The **inference** is programmatically correct: arithmetic, accession
+>    provenance, and result contracts are checked deterministically. But the
+>    final answer is still **natural-language output, which is not
+>    programmatically ensured**. The validator cannot guarantee that the prose
+>    faithfully represents the computed values, or that interpretations and
+>    causal claims are sound.
+> 4. Output requires **grounding** — tying every claim to a specific retrieved
+>    SEC source — which is currently **not supported as-is**. Citations are
+>    checked for provenance, but end-to-end grounding of the narrative is not
+>    enforced.
+>
+> Do not rely on its output for financial or legal decisions without
+> independent verification against the underlying SEC filings.
+
+A local Python agent for retrieving, calculating, and investigating
+public-company SEC EDGAR disclosures, backed by a configurable
+OpenAI-compatible local `llama.cpp` endpoint.
+
+## How it works
+
+The agent loop is: LLM proposes → harness executes → LLM observes → repeat.
+
+- The LLM may only respond with Python code (executed in a persistent REPL
+  with SEC tools injected) or a `FINAL:` answer.
+- Code runs against real SEC EDGAR APIs (`edgar.py`, `sec_data.py`,
+  `filing_text.py`) with deterministic helpers for ratios, debt composition,
+  and filing search.
+- Result contracts are validated programmatically (arithmetic, accession
+  matching, period consistency); failures are fed back to the model as
+  observations.
+- A `DRAFT:` → verification → `FINAL:` protocol asks the model to submit an
+  answer for deterministic checking before it is accepted.
+
+What is **checked**: numeric arithmetic, accession/report-date provenance,
+debt-composition consistency, and the shape of final answers.
+
+What is **not checked**: the natural-language interpretation of results,
+causal claims, or that the final prose matches the verified numbers (see the
+Proof of Concept disclaimer above).
 
 ## Layout
 
@@ -21,11 +69,11 @@ src/
  skills/prompts/      # Pi prompt template for the /secedgar command
 ```
 
-This refactor folds `debt_review.py` into `accounting.py` and `evidence_synthesis.py` into `filing_text.py`. No shim modules are necessary. Imports referencing the old names must be updated.
-
 ## Install and run
 
-Requires Python 3.11+ and `requests` and `pytest`. Edit `src/config.toml` to point to an active OpenAI-compatible server; configure a valid SEC contact in the client before production use.
+Requires Python 3.11+, `requests`, and `pytest`. Edit `src/config.toml` to
+point at an active OpenAI-compatible server; configure a valid SEC contact in
+`src/edgar.py` before production use.
 
 ```bash
 python -m pip install requests pytest
@@ -34,58 +82,43 @@ python src/secedgar_agent.py "What is CoreWeave's net-income-to-debt ratio for i
 python src/secedgar_agent.py "Investigate Oracle's financial conditions and Project Jupiter force majeure."
 ```
 
-`llm.py` requests `/models` and `/chat/completions`. A timeout means inference did not complete, not that the SEC rejected a filing. The agent now terminates cleanly on inference errors; monitor the llama.cpp server if generation is slow.
+A timeout means inference did not complete, not that the SEC rejected a
+filing. The agent terminates cleanly on inference errors; monitor the
+llama.cpp server if generation is slow.
 
-## Contracts and evidence
+## Pi integration
 
-**Ratio:** Use `get_recent_filings(cik, "10-K")` and exact `accessionNumber`/`reportDate`; `select_observation` returns a dict with `val`. `build_debt_composition` supports alternative debt representations. Its arithmetic and accession matching are checked, but a successful result remains **provisional** until debt-note coverage is reconciled. `review_debt_footnote` retrieves passages and identifies categories; it does **not** certify that all borrowings, lease obligations, or company-specific XBRL extensions were accounted for. Do not add lease balances to debt without assessing classification and double counting.
+See [docs/pi-skill.md](docs/pi-skill.md). The repository ships a Pi skill
+(`skills/secedgar/SKILL.md`) and a prompt template
+(`skills/prompts/secedgar.md`) that expose the agent as the
+`/secedgar "<question>"` command. The skill captures exit status and bounded
+output and enforces evidence rules rather than relying solely on a skill
+prompt.
 
-**Research:** `research_filings` returns raw search hits, not claims. `financial_trends` returns a dictionary with `rows`, `changes`, `units`, and `notes`. Each row has `period`, `accession`, `metrics` (e.g. `capital_expenditures: {value, concept}`), and `missing`. `make_trend_indicators(trends, evidence)` generates numeric XBRL indicators with period and accession, but only where that accession appears in retrieved SEC sources. The harness checks the numeric indicator against the live REPL trend data. For text-based findings, provide an exact verbatim excerpt and the matching SEC accession; the harness checks it against retrieved document text. Model interpretation and causal claims are **not** independently fact-checked by the validator.
+## Key interface rules
 
-The ontology `find_concepts` only accepts `net_income_loss` and `total_interest_bearing_debt`. These are **not** the `financial_trends` keys, and derived `free_cash_flow` is not an XBRL concept. Free cash flow = operating cash flow minus capital expenditures only when both exist for the same accession and annual period. Missing values remain missing. `debt_carrying_amount` is not automatically exhaustive interest-bearing debt.
-
-For causal research, distinguish reported financial conditions from evidence directly linking them to an event. A generic liquidity or data-center keyword match does not establish project-level causation. State filing-search scope and retrieval failures when making negative claims.
+- `get_recent_filings(cik, "10-K")` — accession is `accessionNumber`, filing
+  date is `filingDate`, report period is `reportDate`.
+- XBRL observations use `accn`, `start`, `end`, `val`; `select_observation`
+  returns a **dict**, not a scalar — extract the number via `obs["val"]`.
+- `find_concepts` supports `net_income_loss` and `total_interest_bearing_debt`
+  only.
+- `financial_trends(cik, periods=3)` returns a **dict** with `rows` and
+  `changes`; metric values are at `row["metrics"][name]["value"]`.
+- `review_debt_footnote` retrieves passages but does **not** certify that all
+  borrowings, lease obligations, or company-specific XBRL extensions were
+  accounted for. Ratio results stay **provisional** until the footnote is
+  reconciled.
+- `research_filings` findings are keyword hits, **not** conclusions. Missing
+  XBRL values are **not** zero.
 
 ## Tests and static checks
 
 ```bash
 python -m pytest -q
 python -m compileall -q src tests
-python -m pip install ruff
 ruff check src tests
 ```
 
-The local tests are offline and use synthetic fixtures; they do not test live SEC availability, model quality, or accounting exhaustiveness.
-
-## Pi integration
-
-See [docs/pi-skill.md](docs/pi-skill.md). The repository ships a Pi skill
-(`skills/secedgar/SKILL.md`) and a prompt template (`skills/prompts/secedgar.md`)
-that exposes the agent as the `/secedgar "<question>"` command. The skill
-invokes the CLI, captures exit status and bounded output, and enforces
-evidence rules rather than relying solely on a skill prompt.
-
-## REPL inspection and observation
-
-The REPL maintains variables across model steps. `inspect()` is a read-only
-helper injected into its namespace, allowing the model to inspect values
-without guessing their structure:
-
-```python
-print(inspect())                          # variable names and types
-print(inspect("latest", mode="keys"))    # dictionary keys
-print(inspect("latest"))                 # bounded repr preview
-print(inspect("latest", mode="type"))    # Python type
-print(inspect(mode="last_error"))        # latest execution traceback
-print(inspect(mode="validation"))        # most recent result validation
-```
-
-Inspection does not change existing variables. The preview and key counts are
-bounded; it is not a security sandbox and does not prevent malicious Python
-from modifying the process. The agent now preserves the tail of tracebacks in
-recent observations, and stores validator errors for explicit inspection.
-This reduces repeated guesses about SEC filing keys (`accessionNumber`, not
-`accession` or `accn`) and supports repairing a result without recomputing it.
-
-Run `python -m pytest -q` and `ruff check src tests` after changes. Offline
-unit tests do not establish live SEC availability or accounting completeness.
+The tests are offline and use synthetic fixtures; they do not test live SEC
+availability, model quality, or accounting exhaustiveness.
