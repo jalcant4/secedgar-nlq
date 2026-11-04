@@ -16,7 +16,9 @@ src/
   financial_trends.py # accession-matched financial trends
   config.toml         # local model endpoint
  tests/               # offline pytest suite
- docs/pi-skill.md     # Pi skill instructions and contract guidance
+ docs/pi-skill.md     # Pi skill install notes
+ skills/secedgar/     # Pi skill (SKILL.md)
+ skills/prompts/      # Pi prompt template for the /secedgar command
 ```
 
 This refactor folds `debt_review.py` into `accounting.py` and `evidence_synthesis.py` into `filing_text.py`. No shim modules are necessary. Imports referencing the old names must be updated.
@@ -57,7 +59,11 @@ The local tests are offline and use synthetic fixtures; they do not test live SE
 
 ## Pi integration
 
-See [docs/pi-skill.md](docs/pi-skill.md). Prefer invoking the CLI from Pi, capturing exit status and bounded output, and enforcing evidence rules in the harness rather than relying solely on a skill prompt.
+See [docs/pi-skill.md](docs/pi-skill.md). The repository ships a Pi skill
+(`skills/secedgar/SKILL.md`) and a prompt template (`skills/prompts/secedgar.md`)
+that exposes the agent as the `/secedgar "<question>"` command. The skill
+invokes the CLI, captures exit status and bounded output, and enforces
+evidence rules rather than relying solely on a skill prompt.
 
 ## REPL inspection and observation
 
