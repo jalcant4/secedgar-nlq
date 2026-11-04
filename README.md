@@ -62,7 +62,7 @@ src/
   accounting.py       # debt methods, validation, footnote review
   filing_text.py      # filing retrieval, search, evidence preparation
   financial_trends.py # accession-matched financial trends
-  config.toml         # local model endpoint
+  config.toml.example # settings template (copy to config.toml, gitignored)
  tests/               # offline pytest suite
  docs/pi-skill.md     # Pi skill install notes
  skills/secedgar/     # Pi skill (SKILL.md)
@@ -71,9 +71,17 @@ src/
 
 ## Install and run
 
-Requires Python 3.11+, `requests`, and `pytest`. Edit `src/config.toml` to
-point at an active OpenAI-compatible server; configure a valid SEC contact in
-`src/edgar.py` before production use.
+Requires Python 3.11+, `requests`, and `pytest`. The real `src/config.toml`
+is gitignored so personal details never enter the repository — create it from
+the template:
+
+```bash
+cp src/config.toml.example src/config.toml   # set [llm].endpoint and [user].email
+```
+
+`[user].email` is used as the SEC User-Agent contact (override with the
+`SEC_CONTACT_EMAIL` environment variable). Point `[llm].endpoint` at an active
+OpenAI-compatible server.
 
 ```bash
 python -m pip install requests pytest

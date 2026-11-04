@@ -117,9 +117,9 @@ Always include:
 
 ## Prerequisites
 
-- `~/secedgar-nlq/src/config.toml` must point to a running local
-  OpenAI-compatible endpoint (`[llm].endpoint`). Check `/health` before
-  launching a long task.
+- `~/secedgar-nlq/src/config.toml` (create from `config.toml.example`;
+  gitignored) must point to a running local OpenAI-compatible endpoint
+  (`[llm].endpoint`). Check `/health` before launching a long task.
 - The SEC contact email in `src/edgar.py` (`SEC_USER_AGENT`) should be
   valid for production use.
 - Python 3.11+, `requests`.
