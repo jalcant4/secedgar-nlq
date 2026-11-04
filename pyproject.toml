@@ -11,9 +11,6 @@ dependencies = [
 test = ["pytest>=7.0"]
 dev = ["pytest>=7.0", "ruff"]
 
-[project.scripts]
-secedgar = "secedgar_agent:main"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

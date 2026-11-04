@@ -7,3 +7,4 @@ src/config.toml
 *.egg-info/
 .venv/
 venv/
+tests/traces/

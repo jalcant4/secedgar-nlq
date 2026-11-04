@@ -1,8 +1,8 @@
 """SEC EDGAR API client for CIK resolution, filings, and XBRL company facts."""
 
 import os
-import tomllib
 import time
+import tomllib
 from pathlib import Path
 
 import requests

@@ -1,6 +1,7 @@
 """Tests for the simplified FINAL: response protocol."""
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 import secedgar_agent as agent
 
@@ -152,16 +153,16 @@ class TestResearchLoop:
             "_retrieved_documents": {},
         }
         responses = [
-            "```python\n"
-            "cik = get_cik('Apple Inc.')\n"
-            "facts = get_company_facts(cik)\n"
-            "print(facts.get('entityName', 'unknown'))\n"
-            "```",
+            ("```python\n"
+             "cik = get_cik('Apple Inc.')\n"
+             "facts = get_company_facts(cik)\n"
+             "print(facts.get('entityName', 'unknown'))\n"
+             "```"),
             "FINAL:\nApple's latest annual net-income-to-debt ratio is 1.24.",
         ]
-        with patch('secedgar_agent.llm_query', side_effect=responses):
-            with patch('secedgar_agent.sec_tools', return_value=mock_tools):
-                result = agent.research("What is Apple's ratio?", max_steps=10)
+        with patch('secedgar_agent.llm_query', side_effect=responses), \
+             patch('secedgar_agent.sec_tools', return_value=mock_tools):
+            result = agent.research("What is Apple's ratio?", max_steps=10)
         assert result is not None
         assert "Apple" in result
         assert "1.24" in result
@@ -222,7 +223,7 @@ class TestSecTools:
         tools = agent.sec_tools()
         assert tools["_retrieved_documents"] == {}
         with patch('secedgar_agent.get_filing_text', return_value={"text": "hello", "url": "https://example.com"}):
-            doc = tools["get_filing_text"]("0000320193", "0001769628-25-000001", "primary_doc.xml")
+            tools["get_filing_text"]("0000320193", "0001769628-25-000001", "primary_doc.xml")
         assert "0001769628-25-000001" in tools["_retrieved_documents"]
 
 

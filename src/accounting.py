@@ -3,9 +3,11 @@
 These rules establish internally consistent debt representations, not proof that
 all financing obligations are disclosed in the Company Facts API.
 """
+import re
 from dataclasses import dataclass
 from math import isclose, isfinite
 
+from filing_text import search_filing
 from sec_data import normalize_concept
 
 # Accepted representations are alternatives, never additive to one another.
@@ -166,11 +168,8 @@ def build_debt_composition(cik: str, *, period: str, accession: str,
             'total_debt': sum(item['value'] for item in components)}
 
 
-# Debt footnote retrieval and conservative review
-"""Conservative debt-footnote review; never upgrades a ratio to verified by keyword alone."""
-import re
-
-from filing_text import search_filing
+# Debt footnote retrieval and conservative review.
+# Never upgrades a ratio to verified by keyword alone.
 
 DEBT_TERMS = ('long-term debt', 'debt obligations', 'credit agreement',
               'senior secured', 'convertible notes', 'finance lease',

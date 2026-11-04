@@ -115,8 +115,8 @@ def research_filings(cik, forms=('10-K', '10-Q', '8-K'), terms=DEFAULT_RESEARCH_
                             if failures else [])}
 
 
-# Evidence preparation and synthesis checks
-"""Typed, compact evidence preparation for model interpretation."""
+# Evidence preparation and synthesis checks:
+# typed, compact evidence for model interpretation.
 
 def prepare_evidence(evidence, trends=None, *, max_excerpts=12):
     """Return a predictable schema; raw search hits are NOT analytical findings."""

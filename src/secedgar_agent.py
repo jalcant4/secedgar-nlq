@@ -10,13 +10,30 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from accounting import DEBT_STRATEGIES, build_debt_composition, find_concepts, review_debt_footnote
+from accounting import (
+    DEBT_STRATEGIES,
+    build_debt_composition,
+    find_concepts,
+    review_debt_footnote,
+)
 from edgar import get_cik, get_company_facts, get_filings
-from filing_text import filing_url, get_filing_text, prepare_evidence, research_filings, search_filing
+from filing_text import (
+    filing_url,
+    get_filing_text,
+    prepare_evidence,
+    research_filings,
+    search_filing,
+)
 from financial_trends import financial_trends
 from llm import llm_query
 from repl import REPL
-from sec_data import get_annual_observations, get_observations, get_recent_filings, normalize_concept, select_observation
+from sec_data import (
+    get_annual_observations,
+    get_observations,
+    get_recent_filings,
+    normalize_concept,
+    select_observation,
+)
 
 try:
     import requests as _requests
@@ -48,7 +65,7 @@ def _search_wikipedia(query: str, max_results: int = 5) -> list[dict]:
                     "snippet": (r.get("snippet", "") or "")[:200],
                 })
             return results
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         return [{"title": f"wikipedia error: {exc}", "url": "", "snippet": ""}]
 
 
@@ -85,7 +102,7 @@ def _search_duckduckgo(query: str, max_results: int = 5) -> list[dict]:
                 url = raw_url
             results.append({"title": title, "url": url, "snippet": ""})
         return results
-    except Exception:
+    except (OSError, ValueError):
         return []
     finally:
         time.sleep(1)
@@ -443,8 +460,8 @@ def build_prompt(question: str, history: list, last_feedback: str = "", remainin
     tail = f"{last_feedback}\n" if last_feedback else ""
     recent = " ".join(history[-3:]) if history else "(none)"
     draft_block = f"\nDRAFT to verify:\n{draft}\n" if draft else ""
-    lines = [f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\n{GROUNDING_GUIDANCE}\n\nQuestion:\n{question}\n\n{draft_block}"
-             f"Recent steps and feedback:\n{tail}{recent}"]
+    lines = [(f"{RESPONSE_PROTOCOL}\n\n{TOOL_REFERENCE}\n\n{GROUNDING_GUIDANCE}\n\nQuestion:\n{question}\n\n{draft_block}"
+              f"Recent steps and feedback:\n{tail}{recent}")]
     if remaining is not None and remaining <= 3:
         lines.append(
             f"\nOnly {remaining} execution steps remain. "
@@ -520,7 +537,7 @@ def _error_signature(error: str) -> str:
         if not stripped:
             continue
         # Collapse file paths and line numbers: keep only the exception line.
-        if stripped.startswith('File "') or stripped.startswith('  File "'):
+        if stripped.startswith(('File "', '  File "')):
             continue
         sig_lines.append(stripped)
     return '\n'.join(sig_lines)
