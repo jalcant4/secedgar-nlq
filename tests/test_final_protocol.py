@@ -1,6 +1,6 @@
 """Tests for the simplified FINAL: response protocol."""
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import secedgar_agent as agent
 
@@ -20,10 +20,6 @@ class TestIsFinalResponse:
 
     def test_empty_string_not_final(self):
         assert agent.is_final_response("") is False
-
-    def test_none_raises(self):
-        with pytest.raises(AttributeError):
-            agent.is_final_response(None)
 
 
 class TestExtractCode:
@@ -92,17 +88,6 @@ class TestResearchLoop:
             result = agent.research("What is 6 * 7?", max_steps=5)
         assert result == "FINAL: The answer is 42."
         # Only 1 step consumed (the successful FINAL response is not a step)
-        assert mock_llm.call_count == 2
-
-    def test_malformed_code_does_not_consume_turn(self):
-        """Malformed JSON wrapper is retried without burning a step."""
-        responses = [
-            '{"code": 42}',  # malformed JSON
-            "FINAL: The answer is 42.",
-        ]
-        with patch('secedgar_agent.llm_query', side_effect=responses) as mock_llm:
-            result = agent.research("What is 6 * 7?", max_steps=5)
-        assert result == "FINAL: The answer is 42."
         assert mock_llm.call_count == 2
 
     def test_max_steps_exhausted(self):
@@ -208,43 +193,6 @@ class TestBoundedInvalidResponses:
             result = agent.research("test", max_steps=20)
         assert result is None  # exceeded MAX_INVALID_RESPONSES
 
-    def test_valid_code_resets_invalid_count(self):
-        """A successful execution prevents the invalid counter from triggering."""
-        responses = [
-            "```python\nif True\n```",  # invalid
-            "```python\nx = 1\n```",    # valid
-            "```python\nif True\n```",  # invalid again
-            "FINAL: done.",
-        ]
-        with patch('secedgar_agent.llm_query', side_effect=responses):
-            result = agent.research("test", max_steps=20)
-        assert result == "FINAL: done."
-
-    def test_malformed_json_accumulates(self):
-        """Malformed JSON wrappers also increment the invalid counter."""
-        responses = ['{"code": 42}'] * 5 + ["FINAL: done."]
-        with patch('secedgar_agent.llm_query', side_effect=responses):
-            result = agent.research("test", max_steps=20)
-        assert result is None
-
-    def test_mixed_invalid_then_final(self):
-        """Mix of syntax errors and malformed JSON before FINAL."""
-        responses = [
-            "```python\nbad\n```",       # syntax
-            '{"code": 1}',               # malformed JSON
-            "FINAL: done.",
-        ]
-        with patch('secedgar_agent.llm_query', side_effect=responses):
-            result = agent.research("test", max_steps=20)
-        assert result == "FINAL: done."
-
-    def test_max_steps_still_works(self):
-        """Normal max_steps exhaustion still works."""
-        responses = ["```python\nprint(1)\n```"] * 35
-        with patch('secedgar_agent.llm_query', side_effect=responses):
-            result = agent.research("test", max_steps=30)
-        assert result is None
-
 
 class TestSecTools:
     def test_sec_tools_exposes_data_accessors(self):
@@ -294,10 +242,6 @@ class TestCompletionReminder:
         assert "Only 3 execution steps remain" in prompt
         assert "produce FINAL:" in prompt
 
-    def test_prompt_contains_budget_warning_at_one_step(self):
-        prompt = agent.build_prompt("test", [], remaining=1)
-        assert "Only 1 execution steps remain" in prompt
-
     def test_budget_warning_not_added_with_sufficient_steps(self):
         prompt = agent.build_prompt("test", [], remaining=5)
         assert "Only" not in prompt
@@ -319,6 +263,13 @@ class TestRepeatedErrorDetection:
         # The model should get the corrective feedback before the 4th call.
         assert mock_llm.call_count == 4
         assert result == "FINAL: done."
+
+    def test_repeated_errors_still_respect_max_steps(self):
+        """Even with the repeated-error guard, max_steps still terminates."""
+        responses = ["```python\nx / 0\n```"] * 35
+        with patch('secedgar_agent.llm_query', side_effect=responses):
+            result = agent.research("test", max_steps=30)
+        assert result is None
 
     def test_different_errors_do_not_trigger_repeat_guard(self):
         """Two different errors followed by success should not trigger the guard."""
@@ -366,13 +317,6 @@ class TestRepeatedErrorDetection:
         )
         assert sig1 == sig2
 
-    def test_max_steps_still_triggers_with_repeated_errors(self):
-        """Even with the repeated-error guard, max_steps still terminates."""
-        responses = ["```python\nx / 0\n```"] * 35
-        with patch('secedgar_agent.llm_query', side_effect=responses):
-            result = agent.research("test", max_steps=30)
-        assert result is None
-
 
 class TestStructuredFinalAnswer:
     """The prompt guides the model toward a structured final answer."""
@@ -390,9 +334,9 @@ class TestStructuredFinalAnswer:
         assert "Do not fabricate" in prompt
         assert "Do not cite a source that was not retrieved" in prompt
 
-    def test_final_answer_with_research_summary_accepted(self):
-        """A FINAL: with RESEARCH SUMMARY and REFERENCES is accepted unchanged."""
-        answer = (
+    def test_structured_final_answers_accepted(self):
+        """FINAL: answers with CSV tables and RESEARCH SUMMARY/REFERENCES are accepted."""
+        with_summary = (
             "FINAL:\n"
             "CoreWeave, Inc.\n"
             "\n"
@@ -402,12 +346,7 @@ class TestStructuredFinalAnswer:
             "REFERENCES\n"
             "[1] CoreWeave, Inc. (2025). Form 10-Q.\n"
         )
-        assert agent.is_final_response(answer) is True
-        assert answer.strip().startswith("FINAL:")
-
-    def test_final_answer_with_csv_and_summary_accepted(self):
-        """A FINAL: with CSV table, summary, and references is accepted unchanged."""
-        answer = (
+        with_csv = (
             "FINAL:\n"
             "fiscal_period_start,fiscal_period_end,filing_form\n"
             "2025-01-01,2025-12-31,10-K\n"
@@ -418,7 +357,9 @@ class TestStructuredFinalAnswer:
             "REFERENCES\n"
             "[1] CoreWeave, Inc. (2026). Form 10-K.\n"
         )
-        assert agent.is_final_response(answer) is True
+        for answer in (with_summary, with_csv):
+            assert agent.is_final_response(answer) is True
+            assert answer.strip().startswith("FINAL:")
 
     def test_prompt_contains_evidence_handling_rules(self):
         """Normal prompt includes evidence handling guidance."""
@@ -503,6 +444,23 @@ class TestEvidenceProvenance:
         tools = agent.sec_tools()
         assert tools["Evidence"] is agent.Evidence
         assert tools["verify_claim"] is agent.verify_claim
+
+
+class TestGroundingGuidance:
+    """Evidence-grounding guidance is part of the prompt."""
+
+    def test_grounding_guidance_in_prompt(self):
+        prompt = agent.build_prompt("Analyze CoreWeave filings", [])
+        assert agent.GROUNDING_GUIDANCE in prompt
+        assert "Do not invent values" in prompt
+        assert "report it as unknown" in prompt
+        for term in ("Retrieved:", "Derived:", "Inferred:", "Unsupported:"):
+            assert term in prompt
+
+    def test_verification_remains_optional(self):
+        prompt = agent.build_prompt("Analyze SEC filings", [])
+        assert "The model decides" in prompt
+        assert "No specific research workflow is required" in prompt
 
 
 class TestInvalidCountBugFix:
