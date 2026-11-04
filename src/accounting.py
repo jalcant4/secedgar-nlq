@@ -166,7 +166,7 @@ def build_debt_composition(cik: str, *, period: str, accession: str,
             'total_debt': sum(item['value'] for item in components)}
 
 
-# Debt footnote retrieval and conservative review (formerly debt_review.py)
+# Debt footnote retrieval and conservative review
 """Conservative debt-footnote review; never upgrades a ratio to verified by keyword alone."""
 import re
 
