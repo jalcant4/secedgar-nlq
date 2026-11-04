@@ -1,11 +1,27 @@
 """SEC EDGAR API client for CIK resolution, filings, and XBRL company facts."""
 
+import os
+import tomllib
 import time
+from pathlib import Path
 
 import requests
 
+
+def _contact_email() -> str:
+    """SEC contact from $SEC_CONTACT_EMAIL or src/config.toml [user].email."""
+    env = os.environ.get("SEC_CONTACT_EMAIL")
+    if env:
+        return env
+    try:
+        with Path(__file__).with_name("config.toml").open("rb") as f:
+            return tomllib.load(f)["user"]["email"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        return "set [user].email in src/config.toml"
+
+
 # SEC User-Agent: application name and contact email as required by SEC policy
-SEC_USER_AGENT = "secedgar-nlq-system (contact: glenmorangie@users.noreply.github.com)"
+SEC_USER_AGENT = f"secedgar-nlq (contact: {_contact_email()})"
 
 # SEC public API endpoints
 COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"

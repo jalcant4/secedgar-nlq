@@ -1,0 +1,12 @@
+# Copy to src/config.toml and fill in your values. src/config.toml is
+# gitignored so personal details (contact email, local endpoints) never
+# enter the repository.
+#
+# [user].email is used as the SEC User-Agent contact (SEC fair-access
+# policy requires a valid contact). Override with the SEC_CONTACT_EMAIL
+# environment variable if you prefer.
+[user]
+email = "your-email@example.com"
+
+[llm]
+endpoint = "http://127.0.0.1:8090/v1"

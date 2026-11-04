@@ -5,8 +5,14 @@ import requests
 
 config_path = Path(__file__).with_name("config.toml")
 
-with config_path.open("rb") as f:
-    config = tomllib.load(f)
+try:
+    with config_path.open("rb") as f:
+        config = tomllib.load(f)
+except OSError:
+    raise SystemExit(
+        f"{config_path} not found. Copy src/config.toml.example to "
+        "src/config.toml and set [llm].endpoint."
+    ) from None
 
 ENDPOINT = config["llm"]["endpoint"]
 

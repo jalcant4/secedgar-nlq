@@ -11,7 +11,6 @@ For each trial:
 Preserves full traces for post-hoc inspection.
 """
 import json
-import os
 import re
 import sys
 import time
@@ -273,7 +272,6 @@ def run_trial(variant: str, trial_index: int, question: str, expected_starts: di
     call_count = [0]
     draft_used = [False]
     issues_detected = [0]
-    issues_corrected = [0]
     trace_lines: list[str] = []
 
     def counting_query(prompt: str) -> str:
@@ -320,7 +318,8 @@ def run_trial(variant: str, trial_index: int, question: str, expected_starts: di
 
     steps = call_count[0]
     success = bool(answer and "FINAL:" in answer)
-    scores = score_answer(answer, expected_starts, expected_filing_dates=expected_filing_dates, trace_content=content)
+    scores = score_answer(answer, expected_starts, expected_filing_dates=expected_filing_dates,
+                          trace_content="\n\n".join(trace_lines))
     issues_d = issues_detected[0]
     # Count corrections: issues detected minus issues still present in final answer
     incorrect_count = sum(
@@ -378,10 +377,6 @@ def summarize(results: list[TrialResult]) -> str:
 
         avg_steps = sum(t.steps for t in trials) / n
         avg_time = sum(t.elapsed_sec for t in trials) / n
-        successful_time = (
-            sum(t.elapsed_sec for t in successful) / len(successful)
-            if successful else float("nan")
-        )
         total_issues_detected = sum(t.issues_detected for t in trials)
         total_issues_corrected = sum(t.issues_corrected for t in trials)
 
@@ -416,7 +411,7 @@ def main():
     fixture = load_fixture()
     expected_starts = expected_period_starts(fixture)
     expected_filing_dates = {f["accessionNumber"]: f["filingDate"] for f in fixture}
-    print(f"Expected period starts:\n")
+    print("Expected period starts:\n")
     for accn, start in sorted(expected_starts.items()):
         print(f"  {accn}  →  {start or '(no independent start established)'}")
     print()

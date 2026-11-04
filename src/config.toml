@@ -2,4 +2,4 @@
 email = "glenmorangie@users.noreply.github.com"
 
 [llm]
-endpoint = "http://127.0.0.1:8080/v1"
+endpoint = "http://127.0.0.1:8090/v1"

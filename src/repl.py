@@ -30,7 +30,7 @@ class REPL:
         if name is None:
             if mode != "summary":
                 return {"error": "Provide a variable name for this mode"}
-            return {key: (f"<func>" if callable(value) else type(value).__name__)
+            return {key: ("<func>" if callable(value) else type(value).__name__)
                     for key, value in list(self.namespace.items())
                     if not key.startswith("_")}
         if name not in self.namespace:
