@@ -218,7 +218,7 @@ This project remains experimental. In particular:
 
 ## License
 
-**PolyForm Noncommercial License 1.0.0** — [Read the official license](https://polyformproject.org/licenses/noncommercial/1.0.0/).
+**PolyForm Noncommercial License 1.0.0** — [Read the official license](https://polyformproject.org/licenses/noncommercial/1.0.0).
 
 The software is **source-available**, not licensed under an OSI-approved open-source license. Personal, noncommercial, and other qualifying uses are permitted subject to the actual license terms.
 
