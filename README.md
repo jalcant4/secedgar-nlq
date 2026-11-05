@@ -1,8 +1,6 @@
 SEC EDGAR Natural-Language Query Agent
 
-⚠️ Proof of Concept
-
-secedgar-nlq is a proof of concept, not a production system.
+⚠️ secedgar-nlq is a proof of concept, not a production system.
 
 1. It converts a natural-language query into SEC EDGAR API queries that are executed inside a Python environment (a persistent REPL driven by a local LLM).
 2. It enforces the LLM to programmatically decompose the question and produce a programmatic solution — Python code against the SEC tooling — rather than answering from memory.
@@ -97,7 +95,7 @@ Commercial use outside the purposes permitted by PolyForm Noncommercial 1.0.0 re
 
 This includes commercial financial research, business-to-business consulting, integration into commercial products, and paid services when those activities are not otherwise permitted by the license.
 
-There is no automatic commercial-use exemption based on annual business revenue. The previously proposed $100,000 revenue threshold does not apply.
+There is no automatic commercial-use exemption based on annual business revenue.
 
 For commercial licensing inquiries, please open an issue in this repository.
 
@@ -107,4 +105,4 @@ This project is experimental software and is provided without warranties, as spe
 
 Its outputs should be independently verified against authoritative SEC filings before use in financial, investment, or legal decisions.
 
-See the repository’s LICENSE file for the complete legally operative terms.gally operative terms.
+See the repository’s LICENSE file for the complete legally operative terms.
