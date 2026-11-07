@@ -1,5 +1,7 @@
 # SEC EDGAR Natural-Language Query Agent
 
+![secedgar-nlq demo](docs/secedgar-demo.gif)
+
 **A local, Python-powered research agent for querying SEC filings with natural language.**
 
 Ask questions about public-company financial disclosures. The agent uses a configurable, OpenAI-compatible local LLM to write Python, retrieve SEC EDGAR data, calculate financial metrics, and inspect evidence through a persistent REPL.
