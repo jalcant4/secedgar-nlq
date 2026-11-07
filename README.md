@@ -116,6 +116,13 @@ You can override the SEC contact email with `SEC_CONTACT_EMAIL`.
 python -m pip install requests pytest
 ```
 
+Optionally install the package itself (provides the `secedgar` command):
+
+```bash
+python -m pip install -e .
+secedgar "What is CoreWeave's net-income-to-debt ratio?"
+```
+
 ### 3. Run the tests
 
 ```bash
@@ -142,6 +149,7 @@ python src/secedgar_agent.py \
 
 ```text
 src/
+├── compare.py           # Multi-company debt-ratio comparisons
 ├── secedgar_agent.py    # CLI, orchestration, completion contracts, citations
 ├── llm.py               # Local model client
 ├── repl.py              # Persistent Python REPL
@@ -153,6 +161,9 @@ src/
 └── config.toml.example  # Configuration template
 
 tests/                   # Offline pytest suite
+├── evaluate.py          # Live golden-question eval harness
+└── golden_set.json      # Golden questions with deterministic checks
+.github/workflows/       # CI (tests, lint, byte-compile)
 docs/pi-skill.md          # Pi skill installation notes
 skills/secedgar/          # Pi skill definition
 skills/prompts/           # Pi command prompt template
@@ -169,6 +180,7 @@ The agent uses structured filing data. These field names and distinctions matter
 | `select_observation(...)` | Returns an observation **dictionary**, not a scalar. Read its value using `obs["val"]`. |
 | `find_concepts(...)` | Supports `net_income_loss` and `total_interest_bearing_debt` in the described implementation. |
 | `financial_trends(cik, periods=3)` | Returns `rows` and `changes`; a metric value is found at `row["metrics"][name]["value"]`. |
+| `compare_debt_ratios(["CoreWeave", "Oracle"])` | One net-income-to-debt row per company's latest 10-K; per-company failures are reported in that row, not raised. |
 | `review_debt_footnote(...)` | Retrieves relevant passages; **does not certify** complete debt reconciliation. |
 | `research_filings(...)` | Produces keyword findings, **not independently verified conclusions**. |
 
@@ -205,6 +217,14 @@ ruff check src tests
 
 > [!NOTE]
 > The `ruff` command requires Ruff to be installed separately.
+
+The live eval harness runs golden questions through the full agent and scores the final answers against deterministic checks (cited accessions, expected values, required text). It requires a running model endpoint and SEC network access, so it is not part of the offline suite:
+
+```bash
+python tests/evaluate.py              # all golden questions
+python tests/evaluate.py --only 0     # a single item
+python tests/evaluate.py --json report.json
+```
 
 **Test coverage boundary:** Offline tests use synthetic fixtures. They do not establish live SEC availability, model reliability, complete accounting coverage, or correctness of every natural-language interpretation.
 

@@ -16,6 +16,7 @@ from accounting import (
     find_concepts,
     review_debt_footnote,
 )
+from compare import compare_debt_ratios
 from edgar import get_cik, get_company_facts, get_filings
 from filing_text import (
     filing_url,
@@ -230,6 +231,7 @@ def sec_tools() -> dict:
         "normalize_concept": normalize_concept,
         "select_observation": select_observation,
         "build_debt_composition": build_debt_composition,
+        "compare_debt_ratios": compare_debt_ratios,
         "get_filing_text": tracked_filing_text,
         "search_filing": search_filing,
         "filing_url": filing_url,
@@ -669,8 +671,13 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
     return None
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """CLI entry point: secedgar "Your SEC research question"."""
     question = " ".join(sys.argv[1:]).strip()
     if not question:
-        sys.exit('Usage: python secedgar_agent.py "Your SEC research question"')
+        sys.exit('Usage: secedgar "Your SEC research question"')
     research(question)
+
+
+if __name__ == "__main__":
+    main()

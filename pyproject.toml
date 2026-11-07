@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "secedgar-nlq"
 version = "0.1.0"
@@ -10,6 +14,23 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 dev = ["pytest>=7.0", "ruff"]
+
+[project.scripts]
+secedgar = "secedgar_agent:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = [
+    "secedgar_agent",
+    "llm",
+    "repl",
+    "edgar",
+    "sec_data",
+    "accounting",
+    "filing_text",
+    "financial_trends",
+    "compare",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

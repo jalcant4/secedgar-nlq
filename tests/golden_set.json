@@ -1,0 +1,24 @@
+[
+  {
+    "question": "What is the net income to total debt ratio for CoreWeave for its latest annual period?",
+    "checks": [
+      {"type": "accession_cited", "value": "0001769628-26-000104"},
+      {"type": "value_in_answer", "name": "net_income_fy2025", "value": -1167000000},
+      {"type": "value_in_answer", "name": "total_debt", "value": 21373000000}
+    ]
+  },
+  {
+    "question": "What was CoreWeave's net income for fiscal year 2024 as reported in its 10-K?",
+    "checks": [
+      {"type": "accession_cited", "value": "0001769628-26-000104"},
+      {"type": "value_in_answer", "name": "net_income_fy2024", "value": -863000000}
+    ]
+  },
+  {
+    "question": "What fiscal year end date does CoreWeave's latest 10-K report?",
+    "checks": [
+      {"type": "accession_cited", "value": "0001769628-26-000104"},
+      {"type": "text_in_answer", "values": ["2025-12-31", "December 31, 2025"]}
+    ]
+  }
+]
