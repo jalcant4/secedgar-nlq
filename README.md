@@ -61,7 +61,10 @@ Execution results return to the LLM
      └── Iterate as needed
      │
      ▼
-Draft answer → selected validation checks → final answer
+Draft answer → selected validation checks
+     │
+     ▼
+FINAL answer → deterministic evidence gate → released or rejected (3 strikes → stop)
 ```
 
 The agent follows a **propose → execute → observe → repeat** workflow:
@@ -70,6 +73,7 @@ The agent follows a **propose → execute → observe → repeat** workflow:
 2. The REPL executes code using injected SEC research helpers.
 3. The execution result becomes feedback for the next step.
 4. The agent can submit a draft for selected deterministic checks before a final response is accepted.
+5. A `FINAL:` answer is not released on trust: the harness extracts every cited accession number and material number (dollar amounts, comma-grouped values, multi-decimal ratios) and checks each against observations retrieved in the session — directly, under unit scaling, or as a simple arithmetic combination. Untraceable claims are rejected with feedback; three rejections stop the research without an answer.
 
 ### Verification boundary
 
@@ -77,11 +81,12 @@ The agent follows a **propose → execute → observe → repeat** workflow:
 | --- | --- |
 | Selected numeric calculations and result contracts | Correct accounting interpretation in every case |
 | Filing accession and reporting-period consistency in supported paths | Exhaustive inclusion of all debt components |
-| Some debt-composition and observation checks | That final prose faithfully reflects every computed result |
-| Program execution and error feedback | Grounding of every narrative or causal claim |
+| **FINAL gate: every cited accession and material number in the final answer must trace to retrieved observations** (directly, unit-scaled, or as a simple arithmetic combination) | Grounding of narrative or causal claims that carry no numbers |
+| Some debt-composition and observation checks | That a grounded number was computed from the *right* concepts |
+| Program execution and error feedback | That the gate's tolerance (0.1% relative) never admits a coincidental match |
 
 > [!WARNING]
-> **Passing validation does not certify a financial conclusion.** The final conversational answer can still misstate, overgeneralize, or inadequately support a result.
+> **Passing the gate does not certify a financial conclusion.** It proves each cited figure and accession appears in the session's retrieved evidence; it does not prove the figure is the right one for the question.
 
 ## Getting started
 

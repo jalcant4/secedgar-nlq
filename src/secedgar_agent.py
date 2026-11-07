@@ -66,8 +66,10 @@ def _search_wikipedia(query: str, max_results: int = 5) -> list[dict]:
                     "snippet": (r.get("snippet", "") or "")[:200],
                 })
             return results
-    except (OSError, ValueError) as exc:
-        return [{"title": f"wikipedia error: {exc}", "url": "", "snippet": ""}]
+    except (OSError, ValueError):
+        # Return no results so web_search_query falls through to the
+        # DuckDuckGo fallback instead of surfacing an error record as a hit.
+        return []
 
 
 def _search_duckduckgo(query: str, max_results: int = 5) -> list[dict]:
@@ -251,8 +253,12 @@ MODE 2 — DRAFT:: Propose a preliminary answer for verification. The harness
 runs consistency checks and returns the results. The model then decides whether
 to refine the answer (more PYTHON steps) or finalize it with FINAL:.
 
-MODE 3 — FINAL:: Return the completed, verified answer. The harness accepts
-this as the terminal response. No result dictionary, no validation gate.
+MODE 3 — FINAL:: Return the completed, verified answer. The harness checks
+it before accepting: every cited accession number and material number
+(dollar amounts, comma-grouped values, multi-decimal ratios) must be
+traceable to observations retrieved in this session. Untraceable claims are
+rejected with feedback; after 3 rejections the research stops without an
+answer. Ground every figure before finalizing.
 
 When structured data is requested, present the table, CSV, or other
 requested format first. End substantive research answers with
@@ -484,24 +490,6 @@ def build_prompt(question: str, history: list, last_feedback: str = "", remainin
     return "".join(lines)
 
 
-def _evidence_summary(repl: REPL) -> str:
-    """Compact summary of all persistent REPL variables for the model."""
-    vars_dict = repl._namespace or {}
-    lines = ["PERSISTENT STATE:"]
-    for key, val in vars_dict.items():
-        if key.startswith("_"):
-            continue
-        t = type(val).__name__
-        if isinstance(val, list):
-            lines.append(f"  {key}: list[{t}] (len={len(val)})")
-        elif isinstance(val, dict):
-            lines.append(f"  {key}: dict (keys={list(val.keys())[:8]})")
-        else:
-            lines.append(f"  {key}: {t}")
-    return "\n".join(lines)
-    return "".join(lines)
-
-
 def _snapshot(repl: REPL) -> str:
     """Brief state snapshot: variable names, types, and key metadata."""
     vars_summary = {
@@ -590,6 +578,176 @@ def verify_draft(draft: str, repl: REPL) -> str:
     )
 
 
+FINAL_ACCESSION_RE = re.compile(r'\d{10}-\d{2}-\d{6}')
+FINAL_MONEY_RE = re.compile(r'(-?)\s*\$\s?\(?\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?')
+FINAL_NUM_RE = re.compile(r'(?<![\d,$.])(-?)(\d{1,3}(?:,\d{3})+)(?:\.(\d+))?')
+FINAL_DEC_RE = re.compile(r'(?<![\d$])(-?)(\d+)\.(\d{2,})(?!\d)')
+OBS_NUM_RE = re.compile(r'(?<![\d.,])(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)(?![\d.,])')
+
+
+def _state_numbers(repl: REPL, cap: int = 2000) -> list[float]:
+    """All finite numbers persisted in the REPL namespace (bounded)."""
+    from math import isfinite
+    values: list[float] = []
+
+    def walk(obj, depth: int = 0) -> None:
+        if depth > 8 or len(values) >= cap:
+            return
+        if isinstance(obj, bool) or callable(obj):
+            return
+        if isinstance(obj, (int, float)) and isfinite(obj):
+            values.append(float(obj))
+        elif isinstance(obj, dict):
+            for value in obj.values():
+                walk(value, depth + 1)
+        elif isinstance(obj, (list, tuple)):
+            for value in obj:
+                walk(value, depth + 1)
+
+    for value in repl.namespace.values():
+        walk(value)
+    return values
+
+
+def _state_accessions(repl: REPL) -> set[str]:
+    """All accession numbers present anywhere in retrieved REPL state."""
+    found: set[str] = set()
+
+    def walk(obj, depth: int = 0) -> None:
+        if depth > 10 or callable(obj):
+            return
+        if isinstance(obj, str):
+            found.update(FINAL_ACCESSION_RE.findall(obj))
+        elif isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(key, str):
+                    found.update(FINAL_ACCESSION_RE.findall(key))
+                walk(value, depth + 1)
+        elif isinstance(obj, (list, tuple)):
+            for value in obj:
+                walk(value, depth + 1)
+
+    for value in repl.namespace.values():
+        walk(value)
+    return found
+
+
+def _derived_values(state_values: list[float], cap: int = 300, limit: int = 4000) -> list[float]:
+    """Arithmetic combinations of state values, in two levels.
+
+    Level 1: sums, differences, products, and ratios of state values.
+    Level 2: ratios of level-1 results (e.g. net income / (current +
+    noncurrent debt)). Bounded to keep the gate fast.
+    """
+    from math import isfinite
+    base = state_values[:cap]
+
+    def combine(pool: list[float], with_ratios: bool, bound: int) -> list[float]:
+        out: list[float] = []
+        for i, a in enumerate(pool):
+            for b in pool[i:]:
+                for candidate in (a + b, a - b, b - a, a * b):
+                    if isfinite(candidate):
+                        out.append(candidate)
+                if with_ratios and b != 0 and isfinite(a / b):
+                    out.append(a / b)
+                if len(out) >= bound:
+                    return out
+        return out
+
+    level1 = combine(base, with_ratios=True, bound=limit)
+    level2 = combine(level1[:200], with_ratios=True, bound=limit)
+    return level1 + level2
+
+
+def _answer_numbers(answer: str) -> list[tuple[float, str]]:
+    """Material numbers in an answer: dollar amounts, comma-grouped, and multi-decimal values."""
+    found: list[tuple[float, str]] = []
+    seen_spans: list[tuple[int, int]] = []
+
+    def add(match: re.Match, negative_paren: bool = False) -> None:
+        if any(start <= match.start() < end for start, end in seen_spans):
+            return
+        text = match.group(2).replace(",", "")
+        fraction = match.group(3)
+        value = float(text + ("." + fraction if fraction else ""))
+        sign = -1.0 if (match.group(1) == "-" or negative_paren) else 1.0
+        seen_spans.append(match.span())
+        found.append((sign * value, match.group(0)))
+
+    for match in FINAL_MONEY_RE.finditer(answer):
+        add(match, negative_paren="(" in match.group(0))
+    for match in FINAL_NUM_RE.finditer(answer):
+        add(match)
+    for match in FINAL_DEC_RE.finditer(answer):
+        add(match)
+    return found
+
+
+def _is_grounded(value: float, state_values: list[float], derived: list[float]) -> bool:
+    """A number is grounded when it matches state evidence under unit scaling,
+    sign convention (losses as positives), or a simple arithmetic combination."""
+    from math import isclose
+    for candidate in (value, -value):
+        for pool in (state_values, derived):
+            for state_value in pool:
+                for mult in (1.0, 1e3, 1e6, 1e9, 1e-2):
+                    if isclose(candidate * mult, state_value, rel_tol=1e-3, abs_tol=1.0):
+                        return True
+    return False
+
+
+def _observation_numbers(text: str) -> list[float]:
+    """All numbers in observation output (accession patterns excluded)."""
+    cleaned = FINAL_ACCESSION_RE.sub(" ", text)
+    values: list[float] = []
+    for match in OBS_NUM_RE.finditer(cleaned):
+        try:
+            values.append(float(match.group(1).replace(",", "")))
+        except ValueError:
+            continue
+    return values
+
+
+def _history_observations(history: list[str]) -> str:
+    """Concatenated OUTPUT sections of the session history."""
+    parts: list[str] = []
+    for entry in history:
+        index = entry.find("OUTPUT:\n")
+        if index == -1:
+            continue
+        rest = entry[index + len("OUTPUT:\n"):]
+        stop = rest.find("ERROR:\n")
+        parts.append(rest if stop == -1 else rest[:stop])
+    return "\n".join(parts)
+
+
+def verify_final(answer: str, repl: REPL, observation_text: str = "") -> list[str]:
+    """Deterministic gate for FINAL: answers.
+
+    Every cited accession number and material number must be traceable to
+    evidence retrieved in this session — persisted REPL state or printed
+    observation output — directly, under unit scaling, or as a simple
+    arithmetic combination. Returns a list of issues; an empty list means
+    the answer is released.
+    """
+    issues: list[str] = []
+    state_accns = {a.replace("-", "") for a in _state_accessions(repl)}
+    state_accns |= {a.replace("-", "") for a in FINAL_ACCESSION_RE.findall(observation_text)}
+    cited_hyphen = set(FINAL_ACCESSION_RE.findall(answer))
+    for accn in sorted(cited_hyphen):
+        if accn.replace("-", "") not in state_accns:
+            issues.append(f"Cited accession {accn} was not retrieved in this session.")
+    state_values = _state_numbers(repl) + _observation_numbers(observation_text)
+    derived = _derived_values(state_values)
+    for value, rendered in _answer_numbers(answer):
+        if abs(value) < 1000 and "." not in rendered:
+            continue  # Small integers (counts, fiscal years) are not material.
+        if not _is_grounded(value, state_values, derived):
+            issues.append(f"Number {rendered!r} cannot be traced to retrieved observations or a calculation from them.")
+    return issues
+
+
 def check_period(start: str, end: str) -> bool:
     """Check that a fiscal-period start is not after its end date."""
     from datetime import date
@@ -606,6 +764,7 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
     last_error_sig: str | None = None
     repeated_errors = 0
     draft = ""
+    final_rejections = 0
 
     while len(history) < max_steps:
         remaining = max_steps - len(history)
@@ -617,6 +776,22 @@ def research(question: str, max_steps: int = MAX_STEPS) -> str | None:
             return None
         if is_final_response(response):
             answer = response.strip()
+            issues = verify_final(answer, repl, _history_observations(history))
+            if issues:
+                final_rejections += 1
+                feedback = (
+                    "FINAL REJECTED: the following claims cannot be traced to retrieved "
+                    "evidence in this session:\n"
+                    + "\n".join(f"  - {issue}" for issue in issues)
+                    + "\nCorrect them from the retrieved observations, or FINAL: an answer "
+                    "whose every cited accession and material number is grounded."
+                )
+                history.append(feedback)
+                print(feedback, flush=True)
+                if final_rejections >= 3:
+                    print("Research stopped: final answer failed verification 3 times.")
+                    return None
+                continue
             print(answer)
             return answer
         if is_draft_response(response):

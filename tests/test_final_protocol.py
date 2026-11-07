@@ -156,6 +156,7 @@ class TestResearchLoop:
             ("```python\n"
              "cik = get_cik('Apple Inc.')\n"
              "facts = get_company_facts(cik)\n"
+             "ratio = 1.24\n"
              "print(facts.get('entityName', 'unknown'))\n"
              "```"),
             "FINAL:\nApple's latest annual net-income-to-debt ratio is 1.24.",
