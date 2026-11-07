@@ -13,9 +13,11 @@ except ImportError:
     edgar.get_filings = lambda cik: {}
     edgar.get_cik = lambda company: ''
     sys.modules['edgar'] = edgar
+# llm raises SystemExit at import when src/config.toml is absent (e.g. CI);
+# fall back to a stub so the offline suite stays config-free.
 try:
     import llm
-except ImportError:
+except (ImportError, SystemExit):
     llm = types.ModuleType('llm')
     llm.llm_query = lambda prompt: ''
     sys.modules['llm'] = llm
